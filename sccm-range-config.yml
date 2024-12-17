@@ -1,130 +1,210 @@
 ludus:
-  - vm_name: "{{ range_id }}-DC01"
-    hostname: "DC01"
+  - vm_name: "dc1"
+    hostname: "dc1"
     template: win2022-server-x64-template
+    testing:
+      snapshot: true
+      block_internet: false
     vlan: 10
-    ip_last_octet: 10
+    ip_last_octet: 100
     ram_gb: 4
     ram_min_gb: 1
     cpus: 2
     windows:
+      chocolatey_packages:
+        - sysinternals
+        - systeminformer-nightlybuilds
+        - wireshark
       sysprep: true
     domain:
-      fqdn: ludus.domain
+      fqdn: mayyhem.com
       role: primary-dc
     roles:
-      - synzack.ludus_sccm.install_adcs
-      - synzack.ludus_sccm.disable_firewall
+      - install_adcs
+      - disable_firewall
+      - mayyhem_mods
 
-  - vm_name: "{{ range_id }}-Workstation"
-    hostname: "Workstation"
-    template: win11-22h2-x64-enterprise-template
+  - vm_name: "attacker"
+    hostname: "attacker"
+    template: debian-12-x64-server-template
+    testing:
+      snapshot: true
+      block_internet: false
     vlan: 10
-    ip_last_octet: 11
+    ip_last_octet: 5
+    ram_gb: 4
+    ram_min_gb: 1
+    cpus: 2
+
+  - vm_name: "ps1-client"
+    hostname: "ps1-client"
+    template: win11-22h2-x64-enterprise-template
+    testing:
+      snapshot: true
+      block_internet: false
+    vlan: 10
+    ip_last_octet: 111
     ram_gb: 4
     ram_min_gb: 1
     cpus: 2
     windows:
+      chocolatey_packages:
+        - apimonitor
+        - burp-suite-free-edition
+        - openssh
+        - sysinternals
+        - systeminformer-nightlybuilds
+        - visualstudio2022-remotetools
+        - vscode
+        - windows-sdk-10-version-2004-windbg
+        - wireshark
       sysprep: true
     domain:
-      fqdn: ludus.domain
+      fqdn: mayyhem.com
       role: member
     roles:
-      - synzack.ludus_sccm.disable_firewall
+      - disable_firewall
+      - mayyhem_mods
 
-  - vm_name: "{{ range_id }}-sccm-distro"
-    hostname: "sccm-distro"
+  - vm_name: "ps1-dp"
+    hostname: "ps1-dp"
     template: win2022-server-x64-template
+    testing:
+      snapshot: true
+      block_internet: false
     vlan: 10
-    ip_last_octet: 12
+    ip_last_octet: 121
     ram_gb: 4
     ram_min_gb: 1
     cpus: 4
     windows:
+      chocolatey_packages:
+        - openssh
+        - sysinternals
+        - systeminformer-nightlybuilds
+        - vscode
+        - wireshark
       sysprep: true
     domain:
-      fqdn: ludus.domain
+      fqdn: mayyhem.com
       role: member
     roles:
-      - synzack.ludus_sccm.ludus_sccm_distro
+      - ludus_sccm_distro
+      - disable_firewall
+      - mayyhem_mods
     role_vars:
-      ludus_sccm_site_server_hostname: 'sccm-sitesrv' 
+      ludus_sccm_site_server_hostname: 'ps1-pss'
 
-  - vm_name: "{{ range_id }}-sccm-sql"
-    hostname: "sccm-sql"
+  - vm_name: "ps1-db"
+    hostname: "ps1-db"
     template: win2022-server-x64-template
+    testing:
+      snapshot: true
+      block_internet: false
     vlan: 10
-    ip_last_octet: 13
+    ip_last_octet: 151
     ram_gb: 4
     ram_min_gb: 1
     cpus: 4
     windows:
+      chocolatey_packages:
+        - openssh
+        - sql-server-management-studio
+        - sysinternals
+        - systeminformer-nightlybuilds
+        - vscode
+        - wireshark
       sysprep: true
     domain:
-      fqdn: ludus.domain
+      fqdn: mayyhem.com
       role: member
     roles:
-      - synzack.ludus_sccm.ludus_sccm_sql
+      - ludus_sccm_sql
+      - disable_firewall
+      - mayyhem_mods
     role_vars:
-      ludus_sccm_site_server_hostname: 'sccm-sitesrv'    
-      ludus_sccm_sql_server_hostname: 'sccm-sql'         
-      ludus_sccm_sql_svc_account_username: 'sqlsccmsvc'  
+      ludus_sccm_site_server_hostname: 'ps1-pss'    
+      ludus_sccm_sql_server_hostname: 'ps1-db'         
+      ludus_sccm_sql_svc_account_username: 'sccmsqlsvc'  
       ludus_sccm_sql_svc_account_password: 'Password123' 
 
-  - vm_name: "{{ range_id }}-sccm-mgmt"
-    hostname: "sccm-mgmt"
+  - vm_name: "ps1-mp"
+    hostname: "ps1-mp"
     template: win2022-server-x64-template
+    testing:
+      snapshot: true
+      block_internet: false
     vlan: 10
-    ip_last_octet: 14
+    ip_last_octet: 120
     ram_gb: 4
     ram_min_gb: 1
     cpus: 4
     windows:
+      chocolatey_packages:
+        - openssh
+        - sysinternals
+        - systeminformer-nightlybuilds
+        - vscode
+        - wireshark
       sysprep: true
     domain:
-      fqdn: ludus.domain
+      fqdn: mayyhem.com
       role: member
     roles:
-      - synzack.ludus_sccm.ludus_sccm_mgmt
+      - ludus_sccm_mgmt
+      - disable_firewall
+      - mayyhem_mods
     role_vars:
-      ludus_sccm_site_server_hostname: "sccm-sitesrv" 
+      ludus_sccm_site_server_hostname: "ps1-pss" 
 
-  - vm_name: "{{ range_id }}-sccm-sitesrv"
-    hostname: "sccm-sitesrv" 
+  - vm_name: "ps1-pss"
+    hostname: "ps1-pss" 
     template: win2022-server-x64-template
+    testing:
+      snapshot: true
+      block_internet: false
     vlan: 10
-    ip_last_octet: 15
+    ip_last_octet: 150
     ram_gb: 4
     ram_min_gb: 1
     cpus: 4
     windows:
+      chocolatey_packages:
+        - openssh
+        - sysinternals
+        - systeminformer-nightlybuilds
+        - vscode
+        - wireshark
       sysprep: true
     domain:
-      fqdn: ludus.domain
+      fqdn: mayyhem.com
       role: member
     roles:
-      - synzack.ludus_sccm.ludus_sccm_siteserver
-      - synzack.ludus_sccm.enable_webdav
+      - ludus_sccm_siteserver
+      - enable_webdav
+      - disable_firewall
+      - mayyhem_mods
     role_vars:
-      ludus_sccm_sitecode: 123           
-      ludus_sccm_sitename: Primary Site  
-      ludus_sccm_site_server_hostname: 'sccm-sitesrv'  
-      ludus_sccm_distro_server_hostname: 'sccm-distro' 
-      ludus_sccm_mgmt_server_hostname: 'sccm-mgmt'     
-      ludus_sccm_sql_server_hostname: 'sccm-sql'       
+      ludus_sccm_sitecode: PS1           
+      ludus_sccm_sitename: Primary Site One  
+      ludus_sccm_site_server_hostname: 'ps1-pss'
+      ludus_sccm_passive_hostname: 'ps1-psv'
+      ludus_sccm_distro_server_hostname: 'ps1-dp'
+      ludus_sccm_mgmt_server_hostname: 'ps1-mp'
+      ludus_sccm_sql_server_hostname: 'ps1-db'
       # --------------------------NAA Account-------------------------------------------------
       ludus_sccm_configure_naa: true
-      ludus_sccm_naa_username: 'sccm_naa'
+      ludus_sccm_naa_username: 'networkaccess'
       ludus_sccm_naa_password: 'Password123'
       # --------------------------Client Push Account-----------------------------------------
       ludus_sccm_configure_client_push: true
-      ludus_sccm_client_push_username: 'sccm_push'
+      ludus_sccm_client_push_username: 'clientpush'
       ludus_sccm_client_push_password: 'Password123'
       ludus_sccm_enable_automatic_client_push_installation: true
       ludus_sccm_enable_system_type_configuration_manager: true
       ludus_sccm_enable_system_type_server: true
       ludus_sccm_enable_system_type_workstation: true
-      ludus_sccm_install_client_to_domain_controller: false  #"True" Requires Remote Scheduled Tasks Managmenet firewall rules enabled (or no firewall)
+      ludus_sccm_install_client_to_domain_controller: false  # "true" Requires Remote Scheduled Tasks Management Firewall Enabled on the DCs (or no firewall)
       ludus_sccm_allow_NTLM_fallback: true
       # ---------------------------Discovery Methods------------------------------------------
       ludus_sccm_enable_active_directory_forest_discovery: true
@@ -137,9 +217,188 @@ ludus:
       ludus_sccm_enable_pxe: true
       ludus_enable_pxe_password: false
       ludus_pxe_password: 'Password123'
-      ludus_domain_join_account: domainadmin
+      ludus_domain_join_account: da
       ludus_domain_join_password: 'password'
 
+
+  - vm_name: "ps1-psv"
+    hostname: "ps1-psv"
+    template: win2022-server-x64-template
+    testing:
+      snapshot: true
+      block_internet: false
+    vlan: 10
+    ip_last_octet: 160
+    ram_gb: 4
+    ram_min_gb: 1
+    cpus: 4
+    windows:
+      chocolatey_packages:
+        - openssh
+        - sysinternals
+        - systeminformer-nightlybuilds
+        - vscode
+        - wireshark
+      sysprep: true
+    domain:
+      fqdn: mayyhem.com
+      role: member
+    roles:
+      - disable_firewall
+      - mayyhem_mods
+      - ludus_sccm_passive
+    role_vars:
+      ludus_sccm_sitecode: PS1
+      ludus_sccm_site_server_hostname: 'ps1-pss'
       
+  
+  - vm_name: "ps2-pss"
+    hostname: "ps2-pss" 
+    template: win2022-server-x64-template
+    testing:
+      snapshot: true
+      block_internet: false
+    vlan: 10
+    ip_last_octet: 250
+    ram_gb: 4
+    ram_min_gb: 1
+    cpus: 4
+    windows:
+      chocolatey_packages:
+        - openssh
+        - sysinternals
+        - systeminformer-nightlybuilds
+        - vscode
+        - wireshark
+      sysprep: true
+    domain:
+      fqdn: mayyhem.com
+      role: member
+    roles:
+      - ludus_sccm_prep_siteserver
+      - disable_firewall
+      - mayyhem_mods
+  
+  
+  - vm_name: "ps2-db"
+    hostname: "ps2-db"
+    template: win2022-server-x64-template
+    testing:
+      snapshot: true
+      block_internet: false
+    vlan: 10
+    ip_last_octet: 251
+    ram_gb: 4
+    ram_min_gb: 1
+    cpus: 4
+    windows:
+      chocolatey_packages:
+        - openssh
+        - sql-server-management-studio
+        - sysinternals
+        - systeminformer-nightlybuilds
+        - vscode
+        - wireshark
+      sysprep: true
+    domain:
+      fqdn: mayyhem.com
+      role: member
+    roles:
+      - ludus_sccm_sql
+      - disable_firewall
+      - mayyhem_mods
+    role_vars:
+      ludus_sccm_site_server_hostname: 'ps2-pss'
+      ludus_sccm_sql_server_hostname: 'ps2-db'         
+      ludus_sccm_sql_svc_account_username: 'sccmsqlsvc'  
+      ludus_sccm_sql_svc_account_password: 'Password123' 
+
+  - vm_name: "cas-pss"
+    hostname: "cas-pss" 
+    template: win2022-server-x64-template
+    testing:
+      snapshot: true
+      block_internet: false
+    vlan: 10
+    ip_last_octet: 50
+    ram_gb: 4
+    ram_min_gb: 1
+    cpus: 4
+    windows:
+      chocolatey_packages:
+        - openssh
+        - sysinternals
+        - systeminformer-nightlybuilds
+        - vscode
+        - wireshark
+      sysprep: true
+    domain:
+      fqdn: mayyhem.com
+      role: member
+    roles:
+      - ludus_sccm_prep_siteserver
+      - disable_firewall
+      - mayyhem_mods
+  
+  
+  - vm_name: "cas-db"
+    hostname: "cas-db"
+    template: win2022-server-x64-template
+    testing:
+      snapshot: true
+      block_internet: false
+    vlan: 10
+    ip_last_octet: 51
+    ram_gb: 4
+    ram_min_gb: 1
+    cpus: 4
+    windows:
+      chocolatey_packages:
+        - openssh
+        - sql-server-management-studio
+        - sysinternals
+        - systeminformer-nightlybuilds
+        - vscode
+        - wireshark
+      sysprep: true
+    domain:
+      fqdn: mayyhem.com
+      role: member
+    roles:
+      - ludus_sccm_sql
+      - disable_firewall
+      - mayyhem_mods
+    role_vars:
+      ludus_sccm_site_server_hostname: 'cas-pss'
+      ludus_sccm_sql_server_hostname: 'cas-db'         
+      ludus_sccm_sql_svc_account_username: 'sccmsqlsvc'  
+      ludus_sccm_sql_svc_account_password: 'Password123' 
 
 
+  - vm_name: "roles-in-2-sites"
+    hostname: "rits" 
+    template: win2022-server-x64-template
+    testing:
+      snapshot: true
+      block_internet: false
+    vlan: 10
+    ip_last_octet: 222
+    ram_gb: 4
+    ram_min_gb: 1
+    cpus: 4
+    windows:
+      chocolatey_packages:
+        - openssh
+        - sysinternals
+        - systeminformer-nightlybuilds
+        - vscode
+        - wireshark
+      sysprep: true
+    domain:
+      fqdn: mayyhem.com
+      role: member
+    roles:
+      - ludus_sccm_sitesystem_base
+      - disable_firewall
+      - mayyhem_mods
+  
