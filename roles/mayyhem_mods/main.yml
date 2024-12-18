@@ -1,9 +1,9 @@
 - name: Install openssh
-    win_chocolatey:
+  win_chocolatey:
       name: openssh
       package_params: /SSHServerFeature
       state: present
-    tags: openssh
+  tags: openssh
 
 - name: Set up authorized key file
   win_lineinfile:
@@ -47,7 +47,7 @@
 
 - name: Disable AV
   ansible.windows.win_regedit:
-    path: "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection"
+    path: "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows Defender\\Real-Time Protection"
     name: DisableRealtimeMonitoring
     data: 0x00000001
     type: dword

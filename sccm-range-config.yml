@@ -1,6 +1,6 @@
 ludus:
-  - vm_name: "dc1"
-    hostname: "dc1"
+  - vm_name: "{{ range_id }}-dc"
+    hostname: "dc"
     template: win2022-server-x64-template
     testing:
       snapshot: true
@@ -24,7 +24,7 @@ ludus:
       - disable_firewall
       - mayyhem_mods
 
-  - vm_name: "attacker"
+  - vm_name: "{{ range_id }}-attacker"
     hostname: "attacker"
     template: debian-12-x64-server-template
     testing:
@@ -36,7 +36,7 @@ ludus:
     ram_min_gb: 1
     cpus: 2
 
-  - vm_name: "ps1-client"
+  - vm_name: "{{ range_id }}-ps1-client"
     hostname: "ps1-client"
     template: win11-22h2-x64-enterprise-template
     testing:
@@ -66,7 +66,7 @@ ludus:
       - disable_firewall
       - mayyhem_mods
 
-  - vm_name: "ps1-dp"
+  - vm_name: "{{ range_id }}-ps1-dp"
     hostname: "ps1-dp"
     template: win2022-server-x64-template
     testing:
@@ -95,7 +95,7 @@ ludus:
     role_vars:
       ludus_sccm_site_server_hostname: 'ps1-pss'
 
-  - vm_name: "ps1-db"
+  - vm_name: "{{ range_id }}-ps1-db"
     hostname: "ps1-db"
     template: win2022-server-x64-template
     testing:
@@ -128,7 +128,7 @@ ludus:
       ludus_sccm_sql_svc_account_username: 'sccmsqlsvc'  
       ludus_sccm_sql_svc_account_password: 'Password123' 
 
-  - vm_name: "ps1-mp"
+  - vm_name: "{{ range_id }}-ps1-mp"
     hostname: "ps1-mp"
     template: win2022-server-x64-template
     testing:
@@ -157,7 +157,7 @@ ludus:
     role_vars:
       ludus_sccm_site_server_hostname: "ps1-pss" 
 
-  - vm_name: "ps1-pss"
+  - vm_name: "{{ range_id }}-ps1-pss"
     hostname: "ps1-pss" 
     template: win2022-server-x64-template
     testing:
@@ -220,8 +220,33 @@ ludus:
       ludus_domain_join_account: da
       ludus_domain_join_password: 'password'
 
+  - vm_name: "{{ range_id }}-ps1-sms"
+    hostname: "ps1-sms" 
+    template: win2022-server-x64-template
+    testing:
+      snapshot: true
+      block_internet: false
+    vlan: 10
+    ip_last_octet: 152
+    ram_gb: 4
+    ram_min_gb: 1
+    cpus: 4
+    windows:
+      chocolatey_packages:
+        - openssh
+        - sysinternals
+        - systeminformer-nightlybuilds
+        - vscode
+        - wireshark
+      sysprep: true
+    domain:
+      fqdn: mayyhem.com
+      role: member
+    roles:
+      - disable_firewall
+      - mayyhem_mods
 
-  - vm_name: "ps1-psv"
+  - vm_name: "{{ range_id }}-ps1-psv"
     hostname: "ps1-psv"
     template: win2022-server-x64-template
     testing:
@@ -250,9 +275,36 @@ ludus:
     role_vars:
       ludus_sccm_sitecode: PS1
       ludus_sccm_site_server_hostname: 'ps1-pss'
+  
+
+  - vm_name: "{{ range_id }}-ps1-sec"
+    hostname: "ps1-sec" 
+    template: win2022-server-x64-template
+    testing:
+      snapshot: true
+      block_internet: false
+    vlan: 10
+    ip_last_octet: 122
+    ram_gb: 4
+    ram_min_gb: 1
+    cpus: 4
+    windows:
+      chocolatey_packages:
+        - openssh
+        - sysinternals
+        - systeminformer-nightlybuilds
+        - vscode
+        - wireshark
+      sysprep: true
+    domain:
+      fqdn: mayyhem.com
+      role: member
+    roles:
+      - disable_firewall
+      - mayyhem_mods    
       
   
-  - vm_name: "ps2-pss"
+  - vm_name: "{{ range_id }}-ps2-pss"
     hostname: "ps2-pss" 
     template: win2022-server-x64-template
     testing:
@@ -280,7 +332,7 @@ ludus:
       - mayyhem_mods
   
   
-  - vm_name: "ps2-db"
+  - vm_name: "{{ range_id }}-ps2-db"
     hostname: "ps2-db"
     template: win2022-server-x64-template
     testing:
@@ -313,7 +365,7 @@ ludus:
       ludus_sccm_sql_svc_account_username: 'sccmsqlsvc'  
       ludus_sccm_sql_svc_account_password: 'Password123' 
 
-  - vm_name: "cas-pss"
+  - vm_name: "{{ range_id }}-cas-pss"
     hostname: "cas-pss" 
     template: win2022-server-x64-template
     testing:
@@ -341,7 +393,7 @@ ludus:
       - mayyhem_mods
   
   
-  - vm_name: "cas-db"
+  - vm_name: "{{ range_id }}-cas-db"
     hostname: "cas-db"
     template: win2022-server-x64-template
     testing:
@@ -375,7 +427,7 @@ ludus:
       ludus_sccm_sql_svc_account_password: 'Password123' 
 
 
-  - vm_name: "roles-in-2-sites"
+  - vm_name: "{{ range_id }}-roles-in-2-sites"
     hostname: "rits" 
     template: win2022-server-x64-template
     testing:

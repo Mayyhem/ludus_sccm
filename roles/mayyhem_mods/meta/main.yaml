@@ -2,9 +2,9 @@
 dependencies: []
 
 galaxy_info:
-  role_name: ludus_sccm_siteserver
+  role_name: mayyhem_mods
   author: Zach Stein
-  description: Add a SCCM Site Server
+  description: Mayyhem custom mods
   company: SpecterOps
   license: GPLv3
   min_ansible_version: "2.10"

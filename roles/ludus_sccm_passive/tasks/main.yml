@@ -89,7 +89,7 @@
     read: Global
 
 - name: Create SCCM Passive Site Server
-  synzack.ludus_sccm.passivesiteserver:
+  passivesiteserver:
     move_contentlib_to: '\\{{ ludus_sccm_passive_hostname }}\\ContentLib'
     sitesystem_name: '{{ ludus_sccm_passive_hostname }}'
     site_code: '{{ ludus_sccm_sitecode }}'
