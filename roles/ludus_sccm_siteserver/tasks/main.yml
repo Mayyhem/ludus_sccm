@@ -1,57 +1,8 @@
 ---
-- name: Check that all hostnames are <= 15 characters
-  ansible.builtin.fail:
-    msg: "{{ sccm_vm_hostname }} is longer than 15 characters. Due to requirements of SCCM this is not allowed."
-  when: sccm_vm_hostname | length > 15
-  loop:
-    - "{{ ludus_sccm_site_server_hostname }}"
-    - "{{ ludus_sccm_distro_server_hostname }}"
-    - "{{ ludus_sccm_mgmt_server_hostname }}"
-    - "{{ ludus_sccm_sql_server_hostname }}"
-  loop_control:
-    loop_var: sccm_vm_hostname
-
-- name: Enable update service
-  ansible.windows.win_service:
-    name: Windows Update
-    state: started
-    start_mode: auto
-
-- name: Disable Domain firewall
-  community.windows.win_firewall:
-    state: disabled
-    profiles:
-      - Domain
-      - Public
-      - Private
-
-- name: Install Windows Features
-  ansible.windows.win_feature:
-    name:
-      - BITS
-      - BITS-IIS-Ext
-      - GPMC
-      - NET-Framework-Core
-      - NET-Framework-45-Core
-      - RDC
-      - RSAT
-      - Web-WebServer
-      - Web-Common-Http
-      - Web-Dir-Browsing
-      - Web-Http-Errors
-      - Web-Static-Content
-      - Web-Default-Doc
-      - Web-Http-Redirect
-      - Web-Mgmt-Tools
-      - Web-Mgmt-Console
-      - Web-Mgmt-Compat
-      - Web-Metabase
-      - Web-WMI
-      - Web-Windows-Auth
-      - Web-ISAPI-Ext
-      - Web-Scripting-Tools
-      - Web-Mgmt-Service
-    state: present
+# Prep SCCM Install-------------------------------------------------------------------
+- name: Prep SCCM Install
+  ansible.builtin.include_role:
+    name: ludus_sccm_prep_siteserver
 
 # Start SCCM Install-------------------------------------------------------------------
 - name: Begin SCCM Install

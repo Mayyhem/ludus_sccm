@@ -20,9 +20,10 @@ ludus:
       fqdn: mayyhem.com
       role: primary-dc
     roles:
-      - install_adcs
-      - disable_firewall
-      - mayyhem_mods
+      - synzack.ludus_sccm.enable_updates
+      - synzack.ludus_sccm.disable_firewall
+      - synzack.ludus_sccm.install_adcs
+      - synzack.ludus_sccm.mayyhem_mods
 
   - vm_name: "{{ range_id }}-attacker"
     hostname: "attacker"
@@ -63,8 +64,9 @@ ludus:
       fqdn: mayyhem.com
       role: member
     roles:
-      - disable_firewall
-      - mayyhem_mods
+      - synzack.ludus_sccm.enable_updates
+      - synzack.ludus_sccm.disable_firewall
+      - synzack.ludus_sccm.mayyhem_mods
 
   - vm_name: "{{ range_id }}-ps1-dp"
     hostname: "ps1-dp"
@@ -89,9 +91,12 @@ ludus:
       fqdn: mayyhem.com
       role: member
     roles:
-      - ludus_sccm_distro
-      - disable_firewall
-      - mayyhem_mods
+      - synzack.ludus_sccm.enable_updates
+      - synzack.ludus_sccm.disable_firewall
+      - synzack.ludus_sccm.ludus_sccm_distro
+      - synzack.ludus_sccm.enable_webdav
+      - synzack.ludus_sccm.add_pss_to_admins
+      - synzack.ludus_sccm.mayyhem_mods
     role_vars:
       ludus_sccm_site_server_hostname: 'ps1-pss'
 
@@ -119,9 +124,12 @@ ludus:
       fqdn: mayyhem.com
       role: member
     roles:
-      - ludus_sccm_sql
-      - disable_firewall
-      - mayyhem_mods
+      - synzack.ludus_sccm.enable_updates
+      - synzack.ludus_sccm.disable_firewall
+      - synzack.ludus_sccm.ludus_sccm_sql
+      - synzack.ludus_sccm.enable_webdav
+      - synzack.ludus_sccm.add_pss_to_admins
+      - synzack.ludus_sccm.mayyhem_mods
     role_vars:
       ludus_sccm_site_server_hostname: 'ps1-pss'    
       ludus_sccm_sql_server_hostname: 'ps1-db'         
@@ -151,9 +159,12 @@ ludus:
       fqdn: mayyhem.com
       role: member
     roles:
-      - ludus_sccm_mgmt
-      - disable_firewall
-      - mayyhem_mods
+      - synzack.ludus_sccm.enable_updates
+      - synzack.ludus_sccm.disable_firewall
+      - synzack.ludus_sccm.ludus_sccm_mgmt
+      - synzack.ludus_sccm.enable_webdav
+      - synzack.ludus_sccm.add_pss_to_admins
+      - synzack.ludus_sccm.mayyhem_mods
     role_vars:
       ludus_sccm_site_server_hostname: "ps1-pss" 
 
@@ -180,10 +191,41 @@ ludus:
       fqdn: mayyhem.com
       role: member
     roles:
-      - ludus_sccm_siteserver
-      - enable_webdav
-      - disable_firewall
-      - mayyhem_mods
+      - synzack.ludus_sccm.enable_updates
+      - synzack.ludus_sccm.disable_firewall
+      - name: synzack.ludus_sccm.ludus_sccm_siteserver
+        depends_on:
+          # Firewall must be disabled to force GPO update remotely
+          - vm_name: "{{ range_id }}-ps1-client"
+            role: synzack.ludus_sccm.disable_firewall
+          - vm_name: "{{ range_id }}-ps1-db"
+            role: synzack.ludus_sccm.disable_firewall
+          - vm_name: "{{ range_id }}-ps1-dp"
+            role: synzack.ludus_sccm.disable_firewall
+          - vm_name: "{{ range_id }}-ps1-mp"
+            role: synzack.ludus_sccm.disable_firewall
+          - vm_name: "{{ range_id }}-ps1-psv"
+            role: synzack.ludus_sccm.disable_firewall
+          - vm_name: "{{ range_id }}-ps1-sec"
+            role: synzack.ludus_sccm.disable_firewall            
+          - vm_name: "{{ range_id }}-ps1-sms"
+            role: synzack.ludus_sccm.disable_firewall
+          - vm_name: "{{ range_id }}-ps2-db"
+            role: synzack.ludus_sccm.disable_firewall
+          - vm_name: "{{ range_id }}-ps2-pss"
+            role: synzack.ludus_sccm.disable_firewall
+          - vm_name: "{{ range_id }}-cas-db"
+            role: synzack.ludus_sccm.disable_firewall
+          - vm_name: "{{ range_id }}-cas-pss"
+            role: synzack.ludus_sccm.disable_firewall        
+          - vm_name: "{{ range_id }}-roles-in-2-sites"
+            role: synzack.ludus_sccm.disable_firewall                 
+      - synzack.ludus_sccm.enable_webdav
+      - synzack.ludus_sccm.mayyhem_mods
+      #- name: synzack.ludus_sccm.ludus_sccm_install_passive
+      #  depends_on:
+      #    - vm_name: "{{ range_id }}-ps1-psv"
+      #      role: synzack.ludus_sccm.ludus_sccm_prep_passive
     role_vars:
       ludus_sccm_sitecode: PS1           
       ludus_sccm_sitename: Primary Site One  
@@ -243,8 +285,11 @@ ludus:
       fqdn: mayyhem.com
       role: member
     roles:
-      - disable_firewall
-      - mayyhem_mods
+      - synzack.ludus_sccm.enable_updates
+      - synzack.ludus_sccm.disable_firewall
+      - synzack.ludus_sccm.enable_webdav
+      - synzack.ludus_sccm.add_pss_to_admins
+      - synzack.ludus_sccm.mayyhem_mods
 
   - vm_name: "{{ range_id }}-ps1-psv"
     hostname: "ps1-psv"
@@ -269,13 +314,17 @@ ludus:
       fqdn: mayyhem.com
       role: member
     roles:
-      - disable_firewall
-      - mayyhem_mods
-      - ludus_sccm_passive
+      - synzack.ludus_sccm.enable_updates
+      - synzack.ludus_sccm.disable_firewall
+      - synzack.ludus_sccm.ludus_sccm_prep_passive
+      - synzack.ludus_sccm.enable_webdav
+      - synzack.ludus_sccm.add_pss_to_admins
+      - synzack.ludus_sccm.mayyhem_mods
     role_vars:
       ludus_sccm_sitecode: PS1
       ludus_sccm_site_server_hostname: 'ps1-pss'
-  
+      ludus_sccm_passive_hostname: 'ps1-psv'
+
 
   - vm_name: "{{ range_id }}-ps1-sec"
     hostname: "ps1-sec" 
@@ -300,9 +349,12 @@ ludus:
       fqdn: mayyhem.com
       role: member
     roles:
-      - disable_firewall
-      - mayyhem_mods    
-      
+      - synzack.ludus_sccm.enable_updates
+      - synzack.ludus_sccm.disable_firewall
+      - synzack.ludus_sccm.enable_webdav
+      - synzack.ludus_sccm.add_pss_to_admins
+      - synzack.ludus_sccm.mayyhem_mods    
+
   
   - vm_name: "{{ range_id }}-ps2-pss"
     hostname: "ps2-pss" 
@@ -327,9 +379,12 @@ ludus:
       fqdn: mayyhem.com
       role: member
     roles:
-      - ludus_sccm_prep_siteserver
-      - disable_firewall
-      - mayyhem_mods
+      - synzack.ludus_sccm.enable_updates
+      - synzack.ludus_sccm.disable_firewall
+      - synzack.ludus_sccm.ludus_sccm_prep_siteserver
+      - synzack.ludus_sccm.enable_webdav
+      - synzack.ludus_sccm.add_pss_to_admins
+      - synzack.ludus_sccm.mayyhem_mods
   
   
   - vm_name: "{{ range_id }}-ps2-db"
@@ -356,9 +411,12 @@ ludus:
       fqdn: mayyhem.com
       role: member
     roles:
-      - ludus_sccm_sql
-      - disable_firewall
-      - mayyhem_mods
+      - synzack.ludus_sccm.enable_updates
+      - synzack.ludus_sccm.disable_firewall
+      - synzack.ludus_sccm.ludus_sccm_sql
+      - synzack.ludus_sccm.enable_webdav
+      - synzack.ludus_sccm.add_pss_to_admins
+      - synzack.ludus_sccm.mayyhem_mods
     role_vars:
       ludus_sccm_site_server_hostname: 'ps2-pss'
       ludus_sccm_sql_server_hostname: 'ps2-db'         
@@ -388,9 +446,12 @@ ludus:
       fqdn: mayyhem.com
       role: member
     roles:
-      - ludus_sccm_prep_siteserver
-      - disable_firewall
-      - mayyhem_mods
+      - synzack.ludus_sccm.enable_updates
+      - synzack.ludus_sccm.disable_firewall
+      - synzack.ludus_sccm.ludus_sccm_prep_siteserver
+      - synzack.ludus_sccm.enable_webdav
+      - synzack.ludus_sccm.add_pss_to_admins
+      - synzack.ludus_sccm.mayyhem_mods
   
   
   - vm_name: "{{ range_id }}-cas-db"
@@ -417,9 +478,12 @@ ludus:
       fqdn: mayyhem.com
       role: member
     roles:
-      - ludus_sccm_sql
-      - disable_firewall
-      - mayyhem_mods
+      - synzack.ludus_sccm.enable_updates
+      - synzack.ludus_sccm.disable_firewall
+      - synzack.ludus_sccm.ludus_sccm_sql
+      - synzack.ludus_sccm.enable_webdav
+      - synzack.ludus_sccm.add_pss_to_admins
+      - synzack.ludus_sccm.mayyhem_mods
     role_vars:
       ludus_sccm_site_server_hostname: 'cas-pss'
       ludus_sccm_sql_server_hostname: 'cas-db'         
@@ -450,7 +514,8 @@ ludus:
       fqdn: mayyhem.com
       role: member
     roles:
-      - ludus_sccm_sitesystem_base
-      - disable_firewall
-      - mayyhem_mods
+      - synzack.ludus_sccm.enable_updates
+      - synzack.ludus_sccm.disable_firewall
+      - synzack.ludus_sccm.enable_webdav
+      - synzack.ludus_sccm.mayyhem_mods
   

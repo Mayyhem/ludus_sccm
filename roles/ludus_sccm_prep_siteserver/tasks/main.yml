@@ -11,20 +11,6 @@
   loop_control:
     loop_var: sccm_vm_hostname
 
-- name: Enable update service
-  ansible.windows.win_service:
-    name: Windows Update
-    state: started
-    start_mode: auto
-
-- name: Disable Domain firewall
-  community.windows.win_firewall:
-    state: disabled
-    profiles:
-      - Domain
-      - Public
-      - Private
-
 - name: Install Windows Features
   ansible.windows.win_feature:
     name:
@@ -53,7 +39,7 @@
       - Web-Mgmt-Service
     state: present
 
-# Start SCCM Install-------------------------------------------------------------------
-- name: Begin SCCM Install
+# Prep SCCM Install-------------------------------------------------------------------
+- name: Prep SCCM Install
   ansible.builtin.include_tasks:
     file: prep_sccm.yml
