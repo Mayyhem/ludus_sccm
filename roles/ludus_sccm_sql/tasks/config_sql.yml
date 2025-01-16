@@ -32,7 +32,7 @@
 - name: Set admin account fact
   ansible.builtin.set_fact:
     # ludus_sccm_site_server_samaccountname was set in main.yml so we can use it here without fear of it being undefined
-    ludus_sccm_sql_sysadmin_accounts: '{{ ludus_domain_netbios_name }}\{{ hostvars["localhost"]["ludus_sccm_site_server_samaccountname"] }} {{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
+    ludus_sccm_sql_sysadmin_accounts: '{{ ludus_domain_netbios_name }}\{{ hostvars["localhost"]["ludus_sccm_site_server_samaccountname"] }} {{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }} {{ ludus_sccm_sql_additional_sysadmin_accounts}}'
 
 - name: Setup SQL Server - This will take a while
   ansible.windows.win_shell: |

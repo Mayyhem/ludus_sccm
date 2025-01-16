@@ -2,19 +2,14 @@
 dependencies: []
 
 galaxy_info:
-  role_name: ludus_sccm_prep_passive
-  author: Zach Stein
-  description: Add a SCCM Passive Site Server
+  role_name: add_accounts_to_admins
+  author: Chris Thompson
+  description: Add arbitrary accounts to local admins
   company: SpecterOps
   license: GPLv3
   min_ansible_version: "2.10"
   platforms:
     - name: Windows
-      versions:
-        - "2012R2"
-        - "2016"
-        - "2019"
-        - "2022"
 
   galaxy_tags:
     - windows

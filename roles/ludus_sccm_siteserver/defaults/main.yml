@@ -39,7 +39,6 @@ ludus_sccm_enable_subnet_boundary_creation: true
 ludus_sccm_enable_active_directory_group_discovery: true
 ludus_sccm_enable_active_directory_system_discovery: true
 ludus_sccm_enable_active_directory_user_discovery: true
-
 # ----------------------------------PXE-------------------------------------------------
 ludus_sccm_enable_pxe: true
 ludus_enable_pxe_password: false

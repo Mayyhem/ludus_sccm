@@ -1,0 +1,17 @@
+---
+- name: Add accounts to Administrators
+  ansible.windows.win_group_membership:
+    vars:
+      ansible_become: true
+      ansible_become_method: runas
+      ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+      ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+      ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+    name: Administrators
+    members: >-
+      {{
+        ludus_sccm_add_accounts_to_admins.split(',') | map('trim') | list
+        if ludus_sccm_add_accounts_to_admins | length > 0
+        else []
+      }}
+    state: present

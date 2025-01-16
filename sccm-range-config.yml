@@ -133,8 +133,9 @@ ludus:
     role_vars:
       ludus_sccm_site_server_hostname: 'ps1-pss'    
       ludus_sccm_sql_server_hostname: 'ps1-db'         
-      ludus_sccm_sql_svc_account_username: 'sccmsqlsvc'  
-      ludus_sccm_sql_svc_account_password: 'Password123' 
+      ludus_sccm_sql_svc_account_username: 'sccmsqlsvc'
+      ludus_sccm_sql_svc_account_password: 'Password123'
+      ludus_sccm_sql_additional_sysadmin_accounts: 'MAYYHEM\ps1-psv$'
 
   - vm_name: "{{ range_id }}-ps1-mp"
     hostname: "ps1-mp"
@@ -176,12 +177,13 @@ ludus:
       block_internet: false
     vlan: 10
     ip_last_octet: 150
-    ram_gb: 4
+    ram_gb: 6
     ram_min_gb: 1
     cpus: 4
     windows:
       chocolatey_packages:
         - openssh
+        - sql-server-management-studio
         - sysinternals
         - systeminformer-nightlybuilds
         - vscode
@@ -219,13 +221,25 @@ ludus:
           - vm_name: "{{ range_id }}-cas-pss"
             role: synzack.ludus_sccm.disable_firewall        
           - vm_name: "{{ range_id }}-roles-in-2-sites"
-            role: synzack.ludus_sccm.disable_firewall                 
+            role: synzack.ludus_sccm.disable_firewall
       - synzack.ludus_sccm.enable_webdav
       - synzack.ludus_sccm.mayyhem_mods
-      #- name: synzack.ludus_sccm.ludus_sccm_install_passive
-      #  depends_on:
-      #    - vm_name: "{{ range_id }}-ps1-psv"
-      #      role: synzack.ludus_sccm.ludus_sccm_prep_passive
+      - name: synzack.ludus_sccm.ludus_sccm_install_cas
+        depends_on:
+          - vm_name: "{{ range_id }}-cas-pss"
+            role: synzack.ludus_sccm.add_pss_to_admins
+      - name: synzack.ludus_sccm.ludus_sccm_install_passive
+        depends_on:
+          - vm_name: "{{ range_id }}-ps1-psv"
+            role: synzack.ludus_sccm.disable_firewall
+          - vm_name: "{{ range_id }}-ps1-psv"
+            role: synzack.ludus_sccm.ludus_sccm_create_contentlib_share
+          - vm_name: "{{ range_id }}-ps1-psv"
+            role: synzack.ludus_sccm.ludus_sccm_sql
+          - vm_name: "{{ range_id }}-ps1-psv"
+            role: synzack.ludus_sccm.ludus_sccm_prep_siteserver        
+          - vm_name: "{{ range_id }}-ps1-psv"
+            role: synzack.ludus_sccm.add_pss_to_admins
     role_vars:
       ludus_sccm_sitecode: PS1           
       ludus_sccm_sitename: Primary Site One  
@@ -305,6 +319,7 @@ ludus:
     windows:
       chocolatey_packages:
         - openssh
+        - sql-server-management-studio
         - sysinternals
         - systeminformer-nightlybuilds
         - vscode
@@ -316,15 +331,20 @@ ludus:
     roles:
       - synzack.ludus_sccm.enable_updates
       - synzack.ludus_sccm.disable_firewall
-      - synzack.ludus_sccm.ludus_sccm_prep_passive
+      - synzack.ludus_sccm.ludus_sccm_create_contentlib_share
+      - synzack.ludus_sccm.ludus_sccm_sql
+      - synzack.ludus_sccm.ludus_sccm_prep_siteserver
       - synzack.ludus_sccm.enable_webdav
       - synzack.ludus_sccm.add_pss_to_admins
       - synzack.ludus_sccm.mayyhem_mods
     role_vars:
+      ludus_install_directory: /opt/ludus
+      ludus_sccm_adksetup_url: https://download.microsoft.com/download/0/1/C/01CC78AA-B53B-4884-B7EA-74F2878AA79F/adk/adksetup.exe
+      ludus_sccm_adkwinpesetup_url: https://download.microsoft.com/download/D/7/E/D7E22261-D0B3-4ED6-8151-5E002C7F823D/adkwinpeaddons/adkwinpesetup.exe
+      ludus_sccm_configmgr_url: https://download.microsoft.com/download/0/0/1/001d97e2-c427-4d4b-ad30-1556ee0ff1b0/MCM_Configmgr_2303.exe
+      ludus_sccm_host_path: "C:\\ludus\\sccm"
       ludus_sccm_sitecode: PS1
       ludus_sccm_site_server_hostname: 'ps1-pss'
-      ludus_sccm_passive_hostname: 'ps1-psv'
-
 
   - vm_name: "{{ range_id }}-ps1-sec"
     hostname: "ps1-sec" 
@@ -340,6 +360,7 @@ ludus:
     windows:
       chocolatey_packages:
         - openssh
+        - sql-server-management-studio
         - sysinternals
         - systeminformer-nightlybuilds
         - vscode
@@ -351,10 +372,19 @@ ludus:
     roles:
       - synzack.ludus_sccm.enable_updates
       - synzack.ludus_sccm.disable_firewall
+      - synzack.ludus_sccm.ludus_sccm_sql
+      - synzack.ludus_sccm.ludus_sccm_prep_siteserver
       - synzack.ludus_sccm.enable_webdav
       - synzack.ludus_sccm.add_pss_to_admins
-      - synzack.ludus_sccm.mayyhem_mods    
-
+      - synzack.ludus_sccm.mayyhem_mods
+    role_vars:
+      ludus_install_directory: /opt/ludus
+      ludus_sccm_adksetup_url: https://download.microsoft.com/download/0/1/C/01CC78AA-B53B-4884-B7EA-74F2878AA79F/adk/adksetup.exe
+      ludus_sccm_adkwinpesetup_url: https://download.microsoft.com/download/D/7/E/D7E22261-D0B3-4ED6-8151-5E002C7F823D/adkwinpeaddons/adkwinpesetup.exe
+      ludus_sccm_configmgr_url: https://download.microsoft.com/download/0/0/1/001d97e2-c427-4d4b-ad30-1556ee0ff1b0/MCM_Configmgr_2303.exe
+      ludus_sccm_host_path: "C:\\ludus\\sccm"
+      ludus_sccm_sitecode: PS1
+      ludus_sccm_site_server_hostname: 'ps1-pss'
   
   - vm_name: "{{ range_id }}-ps2-pss"
     hostname: "ps2-pss" 
@@ -364,12 +394,13 @@ ludus:
       block_internet: false
     vlan: 10
     ip_last_octet: 250
-    ram_gb: 4
+    ram_gb: 6
     ram_min_gb: 1
     cpus: 4
     windows:
       chocolatey_packages:
         - openssh
+        - sql-server-management-studio
         - sysinternals
         - systeminformer-nightlybuilds
         - vscode
@@ -383,9 +414,15 @@ ludus:
       - synzack.ludus_sccm.disable_firewall
       - synzack.ludus_sccm.ludus_sccm_prep_siteserver
       - synzack.ludus_sccm.enable_webdav
-      - synzack.ludus_sccm.add_pss_to_admins
       - synzack.ludus_sccm.mayyhem_mods
-  
+    role_vars:
+      ludus_install_directory: /opt/ludus
+      ludus_sccm_adksetup_url: https://download.microsoft.com/download/0/1/C/01CC78AA-B53B-4884-B7EA-74F2878AA79F/adk/adksetup.exe
+      ludus_sccm_adkwinpesetup_url: https://download.microsoft.com/download/D/7/E/D7E22261-D0B3-4ED6-8151-5E002C7F823D/adkwinpeaddons/adkwinpesetup.exe
+      ludus_sccm_configmgr_url: https://download.microsoft.com/download/0/0/1/001d97e2-c427-4d4b-ad30-1556ee0ff1b0/MCM_Configmgr_2303.exe
+      ludus_sccm_host_path: "C:\\ludus\\sccm"
+      ludus_sccm_sitecode: PS2
+      ludus_sccm_site_server_hostname: 'ps2-pss'
   
   - vm_name: "{{ range_id }}-ps2-db"
     hostname: "ps2-db"
@@ -419,9 +456,9 @@ ludus:
       - synzack.ludus_sccm.mayyhem_mods
     role_vars:
       ludus_sccm_site_server_hostname: 'ps2-pss'
-      ludus_sccm_sql_server_hostname: 'ps2-db'         
+      ludus_sccm_sql_server_hostname: 'ps2-db'
       ludus_sccm_sql_svc_account_username: 'sccmsqlsvc'  
-      ludus_sccm_sql_svc_account_password: 'Password123' 
+      ludus_sccm_sql_svc_account_password: 'Password123'
 
   - vm_name: "{{ range_id }}-cas-pss"
     hostname: "cas-pss" 
@@ -431,12 +468,13 @@ ludus:
       block_internet: false
     vlan: 10
     ip_last_octet: 50
-    ram_gb: 4
+    ram_gb: 6
     ram_min_gb: 1
     cpus: 4
     windows:
       chocolatey_packages:
         - openssh
+        - sql-server-management-studio
         - sysinternals
         - systeminformer-nightlybuilds
         - vscode
@@ -452,8 +490,16 @@ ludus:
       - synzack.ludus_sccm.enable_webdav
       - synzack.ludus_sccm.add_pss_to_admins
       - synzack.ludus_sccm.mayyhem_mods
-  
-  
+    role_vars:
+      ludus_install_directory: /opt/ludus
+      ludus_sccm_adksetup_url: https://download.microsoft.com/download/0/1/C/01CC78AA-B53B-4884-B7EA-74F2878AA79F/adk/adksetup.exe
+      ludus_sccm_adkwinpesetup_url: https://download.microsoft.com/download/D/7/E/D7E22261-D0B3-4ED6-8151-5E002C7F823D/adkwinpeaddons/adkwinpesetup.exe
+      ludus_sccm_configmgr_url: https://download.microsoft.com/download/0/0/1/001d97e2-c427-4d4b-ad30-1556ee0ff1b0/MCM_Configmgr_2303.exe
+      ludus_sccm_host_path: "C:\\ludus\\sccm"
+      ludus_sccm_sitecode: CAS
+      ludus_sccm_site_server_hostname: 'cas-pss' 
+      ludus_sccm_add_accounts_to_admins: 'MAYYHEM\ps1-pss$' # Primary site extending hierarchy requires temporary admin
+
   - vm_name: "{{ range_id }}-cas-db"
     hostname: "cas-db"
     template: win2022-server-x64-template
@@ -486,10 +532,9 @@ ludus:
       - synzack.ludus_sccm.mayyhem_mods
     role_vars:
       ludus_sccm_site_server_hostname: 'cas-pss'
-      ludus_sccm_sql_server_hostname: 'cas-db'         
+      ludus_sccm_sql_server_hostname: 'cas-db'    
       ludus_sccm_sql_svc_account_username: 'sccmsqlsvc'  
       ludus_sccm_sql_svc_account_password: 'Password123' 
-
 
   - vm_name: "{{ range_id }}-roles-in-2-sites"
     hostname: "rits" 
@@ -517,5 +562,134 @@ ludus:
       - synzack.ludus_sccm.enable_updates
       - synzack.ludus_sccm.disable_firewall
       - synzack.ludus_sccm.enable_webdav
+      - synzack.ludus_sccm.add_pss_to_admins
       - synzack.ludus_sccm.mayyhem_mods
-  
+    role_vars:
+      ludus_sccm_site_server_hostname: 'ps1-pss'
+
+  - vm_name: "{{ range_id }}-roles-in-2-hierarchies"
+    hostname: "rith" 
+    template: win2022-server-x64-template
+    testing:
+      snapshot: true
+      block_internet: false
+    vlan: 10
+    ip_last_octet: 212
+    ram_gb: 4
+    ram_min_gb: 1
+    cpus: 4
+    windows:
+      chocolatey_packages:
+        - openssh
+        - sysinternals
+        - systeminformer-nightlybuilds
+        - vscode
+        - wireshark
+      sysprep: true
+    domain:
+      fqdn: mayyhem.com
+      role: member
+    roles:
+      - synzack.ludus_sccm.enable_updates
+      - synzack.ludus_sccm.disable_firewall
+      - synzack.ludus_sccm.enable_webdav
+      - synzack.ludus_sccm.add_pss_to_admins
+      - synzack.ludus_sccm.mayyhem_mods
+    role_vars:
+      ludus_sccm_site_server_hostname: 'hi2-pss'
+
+  - vm_name: "{{ range_id }}-hi2-pss"
+    hostname: "hi2-pss" 
+    template: win2022-server-x64-template
+    testing:
+      snapshot: true
+      block_internet: false
+    vlan: 10
+    ip_last_octet: 210
+    ram_gb: 6
+    ram_min_gb: 1
+    cpus: 4
+    windows:
+      chocolatey_packages:
+        - openssh
+        - sql-server-management-studio
+        - sysinternals
+        - systeminformer-nightlybuilds
+        - vscode
+        - wireshark
+      sysprep: true
+    domain:
+      fqdn: mayyhem.com
+      role: member
+    roles:
+      - synzack.ludus_sccm.enable_updates
+      - synzack.ludus_sccm.disable_firewall
+      - synzack.ludus_sccm.ludus_sccm_sql
+      - synzack.ludus_sccm.ludus_sccm_prep_siteserver
+      - synzack.ludus_sccm.ludus_sccm_siteserver
+      - synzack.ludus_sccm.enable_webdav
+      - synzack.ludus_sccm.mayyhem_mods
+    role_vars:
+      ludus_install_directory: /opt/ludus
+      ludus_sccm_adksetup_url: https://download.microsoft.com/download/0/1/C/01CC78AA-B53B-4884-B7EA-74F2878AA79F/adk/adksetup.exe
+      ludus_sccm_adkwinpesetup_url: https://download.microsoft.com/download/D/7/E/D7E22261-D0B3-4ED6-8151-5E002C7F823D/adkwinpeaddons/adkwinpesetup.exe
+      ludus_sccm_configmgr_url: https://download.microsoft.com/download/0/0/1/001d97e2-c427-4d4b-ad30-1556ee0ff1b0/MCM_Configmgr_2303.exe
+      ludus_sccm_host_path: "C:\\ludus\\sccm"
+      ludus_sccm_sitecode: HI2        
+      ludus_sccm_sitename: Hierarchy Two - Standalone Primary Site  
+      ludus_sccm_site_server_hostname: 'hi2-pss'
+      ludus_sccm_sql_server_hostname: 'hi2-pss'
+      ludus_sccm_distro_server_hostname: 'hi2-pss'
+      ludus_sccm_mgmt_server_hostname: 'hi2-pss'
+      ludus_sccm_configure_naa: false
+      ludus_sccm_configure_client_push: false
+      ludus_sccm_enable_active_directory_forest_discovery: true
+      ludus_sccm_enable_active_directory_boundary_creation: true
+      ludus_sccm_enable_subnet_boundary_creation: true
+      ludus_sccm_enable_active_directory_group_discovery: true
+      ludus_sccm_enable_active_directory_system_discovery: true
+      ludus_sccm_enable_active_directory_user_discovery: true
+      ludus_sccm_enable_pxe: false
+
+  - vm_name: "{{ range_id }}-hi3-ps2"
+    hostname: "hi3-ps2" 
+    template: win2022-server-x64-template
+    testing:
+      snapshot: true
+      block_internet: false
+    vlan: 10
+    ip_last_octet: 230
+    ram_gb: 6
+    ram_min_gb: 1
+    cpus: 4
+    windows:
+      chocolatey_packages:
+        - openssh
+        - sql-server-management-studio
+        - sysinternals
+        - systeminformer-nightlybuilds
+        - vscode
+        - wireshark
+      sysprep: true
+    domain:
+      fqdn: mayyhem.com
+      role: member
+    roles:
+      - synzack.ludus_sccm.enable_updates
+      - synzack.ludus_sccm.disable_firewall
+      - synzack.ludus_sccm.ludus_sccm_sql
+      - synzack.ludus_sccm.ludus_sccm_prep_siteserver
+      - synzack.ludus_sccm.enable_webdav
+      - synzack.ludus_sccm.mayyhem_mods
+    role_vars:
+      ludus_install_directory: /opt/ludus
+      ludus_sccm_adksetup_url: https://download.microsoft.com/download/0/1/C/01CC78AA-B53B-4884-B7EA-74F2878AA79F/adk/adksetup.exe
+      ludus_sccm_adkwinpesetup_url: https://download.microsoft.com/download/D/7/E/D7E22261-D0B3-4ED6-8151-5E002C7F823D/adkwinpeaddons/adkwinpesetup.exe
+      ludus_sccm_configmgr_url: https://download.microsoft.com/download/0/0/1/001d97e2-c427-4d4b-ad30-1556ee0ff1b0/MCM_Configmgr_2303.exe
+      ludus_sccm_host_path: "C:\\ludus\\sccm"
+      ludus_sccm_sitecode: PS2      
+      ludus_sccm_sitename: Hierarchy Three - Same Domain Same Site Code
+      ludus_sccm_site_server_hostname: 'hi3-ps2'
+      ludus_sccm_sql_server_hostname: 'hi3-ps2'
+      ludus_sccm_distro_server_hostname: 'hi3-ps2'
+      ludus_sccm_mgmt_server_hostname: 'hi3-ps2'

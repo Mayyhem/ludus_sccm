@@ -1,30 +1,4 @@
 ---
-- name: Enable update service
-  ansible.windows.win_service:
-    name: Windows Update
-    state: started
-    start_mode: auto
-
-- name: Disable Domain firewall
-  community.windows.win_firewall:
-    state: disabled
-    profiles:
-      - Domain
-      - Public
-      - Private
-
-- name: Install .NET Windows Features
-  ansible.windows.win_feature:
-    name:
-      - NET-Framework-Core
-      - NET-Framework-45-Core
-      - RSAT
-      - Web-WebServer
-      - Web-Mgmt-Console
-      - Web-Metabase
-      - Web-WMI
-    state: present
-
 # Why do we have to do this lookup? Because if the user specified a hostname > 15 characters
 # Windows will truncate the comptuer name to the first 15 (plus a '$') and computer names
 # by default are not assigned a UPN in active directory
@@ -50,11 +24,16 @@
       delegate_to: localhost
       delegate_facts: true # Use localhost to share this var between sccm hosts (like a cache)
 
-- name: Add the Site Server as a Local Admin
-  ansible.windows.win_group_membership:
-    name: Administrators
-    members:
-      - '{{ ludus_domain_netbios_name }}\{{ hostvars["localhost"]["ludus_sccm_site_server_samaccountname"] }}'
+- name: Install .NET Windows Features
+  ansible.windows.win_feature:
+    name:
+      - NET-Framework-Core
+      - NET-Framework-45-Core
+      - RSAT
+      - Web-WebServer
+      - Web-Mgmt-Console
+      - Web-Metabase
+      - Web-WMI
     state: present
 
 # Start SQL Server Install-------------------------------------------------------------------
