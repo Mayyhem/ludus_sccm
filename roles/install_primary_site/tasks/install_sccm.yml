@@ -1,0 +1,273 @@
+---
+# This prevents waiting hours for SCCM setup to fail if the MSSQL server is not up
+- name: Fail if the SQL server is not reachable
+  ansible.windows.win_wait_for:
+    host: "{{ ludus_sccm_sql_server_hostname }}"
+    port: 1433
+    state: started
+    timeout: 5
+
+- name: Update attempt counter
+  set_fact:
+    sccm_attempt_number: "{{ attempt_number }}"
+
+- name: Clear old logs and trackers (attempt {{ attempt_number }})
+  ansible.windows.win_shell: |
+    Remove-Item "C:\ConfigMgrSetup.log" -Force -ErrorAction SilentlyContinue
+    Remove-Item "C:\ConfigMgrPrereq.log" -Force -ErrorAction SilentlyContinue
+    Remove-Item "C:\sccm_stall_tracker.txt" -Force -ErrorAction SilentlyContinue
+    Remove-Item "C:\sccm_failure_tracker.txt" -Force -ErrorAction SilentlyContinue
+  failed_when: false
+  changed_when: false
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+- name: Create monitor script (attempt {{ attempt_number }})
+  ansible.windows.win_copy:
+    dest: C:\sccm_monitor.ps1
+    force: yes
+    content: |
+      try {
+          # Check if SMS_EXECUTIVE service is running (installation complete)
+          $service = Get-Service -Name "SMS_EXECUTIVE" -ErrorAction SilentlyContinue
+          if ($service -and $service.Status -eq "Running") {
+              Write-Output "SMS_EXECUTIVE is running - installation complete"
+              $host.SetShouldExit(0)
+              exit 0
+          }
+          
+          # Check both log files
+          $setupLog = "C:\ConfigMgrSetup.log"
+          $prereqLog = "C:\ConfigMgrPrereq.log"
+          $tracker = "C:\sccm_stall_tracker.txt"
+          
+          $setupLogExists = Test-Path $setupLog
+          $prereqLogExists = Test-Path $prereqLog
+          
+          # Check if setup process is running
+          $setupProcess = Get-Process -Name "setup" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*SMSSETUP*" }
+          
+          if (-not $setupProcess) {
+              # Setup process not running - check if it ever started
+              if ($setupLogExists -or $prereqLogExists) {
+                  Write-Output "Setup process has exited - installation failed"
+                  
+                  # Check for duplicate installation error
+                  if ($prereqLogExists) {
+                      try {
+                          $prereqContent = Get-Content $prereqLog -Raw -ErrorAction Stop
+                          if ($prereqContent -match "ERROR: Site server has already been installed on this machine") {
+                              Write-Output "DUPLICATE INSTALLATION DETECTED - Running deinstall"
+                              Start-Process -FilePath "C:\ludus\sccm\cd.retail.LN\SMSSETUP\BIN\X64\setup.exe" -ArgumentList "/DEINSTALL" -NoNewWindow -Wait
+                              Write-Output "Deinstall completed"
+                          }
+                      } catch {
+                          Write-Output "Could not read prereq log"
+                      }
+                  }
+                  
+                  Write-Output "`n=== Last 50 lines of ConfigMgrSetup.log ==="
+                  if ($setupLogExists) {
+                      try {
+                          Get-Content $setupLog -Tail 50 -ErrorAction Stop | ForEach-Object { Write-Output $_ }
+                      } catch {}
+                  }
+                  if ($prereqLogExists) {
+                      Write-Output "`n=== Last 50 lines of ConfigMgrPrereq.log ==="
+                      try {
+                          Get-Content $prereqLog -Tail 50 -ErrorAction Stop | ForEach-Object { Write-Output $_ }
+                      } catch {}
+                  }
+                  $host.SetShouldExit(1)
+                  exit 1
+              } else {
+                  Write-Output "Setup process not running - waiting for setup to start"
+                  $host.SetShouldExit(2)
+                  exit 2
+              }
+          }
+          
+          Write-Output "Setup running (PID: $($setupProcess.Id)) - monitoring for stalls"
+          
+          $currentSizes = @{}
+          $mostRecentLog = $null
+          $mostRecentTime = [DateTime]::MinValue
+          
+          foreach ($log in @($setupLog, $prereqLog)) {
+              if (Test-Path $log) {
+                  try {
+                      $file = Get-Item $log -ErrorAction Stop
+                      $currentSizes[$log] = $file.Length
+                      if ($file.LastWriteTime -gt $mostRecentTime) {
+                          $mostRecentTime = $file.LastWriteTime
+                          $mostRecentLog = $log
+                      }
+                  } catch {
+                      $currentSizes[$log] = 0
+                  }
+              } else {
+                  $currentSizes[$log] = 0
+              }
+          }
+          
+          # Load previous state
+          $previousSizes = @{}
+          $stallCount = 0
+          
+          if (Test-Path $tracker) {
+              try {
+                  $data = Get-Content $tracker -ErrorAction Stop
+                  if ($data -and $data.Count -ge 3) {
+                      $previousSizes[$setupLog] = [long]$data[0]
+                      $previousSizes[$prereqLog] = [long]$data[1]
+                      $stallCount = [int]$data[2]
+                  }
+              } catch {
+                  # Ignore tracker read errors
+              }
+          }
+          
+          # Check if either log has grown
+          $hasGrowth = $false
+          foreach ($log in $currentSizes.Keys) {
+              $prev = if ($previousSizes.ContainsKey($log)) { $previousSizes[$log] } else { -1 }
+              $curr = $currentSizes[$log]
+              
+              if ($prev -ne -1 -and $curr -gt $prev) {
+                  $hasGrowth = $true
+                  Write-Output "$log grew by $($curr - $prev) bytes"
+              }
+          }
+          
+          if (-not $hasGrowth -and $previousSizes.Count -gt 0) {
+              $stallCount++
+              $stallSeconds = $stallCount * 60 # Each check is 1 minute apart
+              Write-Output "No log growth - stalled for $stallSeconds seconds ($stallCount/5 checks)"
+              
+              # If stalled for 5 checks (5 minutes), consider it a stall
+              if ($stallCount -ge 5) {
+                  Write-Output "STALL DETECTED after 5 minutes"
+                  
+                  # Check for duplicate installation error
+                  if (Test-Path $prereqLog) {
+                      try {
+                          $prereqContent = Get-Content $prereqLog -Raw -ErrorAction Stop
+                          if ($prereqContent -match "ERROR: Site server has already been installed on this machine") {
+                              Write-Output "DUPLICATE INSTALLATION DETECTED - Running deinstall"
+                              Stop-Process -Id $setupProcess.Id -Force
+                              Start-Sleep -Seconds 2
+                              Start-Process -FilePath "C:\ludus\sccm\cd.retail.LN\SMSSETUP\BIN\X64\setup.exe" -ArgumentList "/DEINSTALL" -NoNewWindow -Wait
+                              Write-Output "Deinstall completed"
+                          } else {
+                              Write-Output "Terminating stalled setup process"
+                              Stop-Process -Id $setupProcess.Id -Force
+                          }
+                      } catch {
+                          Write-Output "Terminating stalled setup process"
+                          Stop-Process -Id $setupProcess.Id -Force
+                      }
+                  }
+                  
+                  Write-Output "`n=== Last 50 lines of $mostRecentLog ==="
+                  if (Test-Path $mostRecentLog) {
+                      try {
+                          Get-Content $mostRecentLog -Tail 50 -ErrorAction Stop | ForEach-Object { Write-Output $_ }
+                      } catch {}
+                  }
+                  $host.SetShouldExit(1)
+                  exit 1
+              }
+          } else {
+              $stallCount = 0
+          }
+          
+          # Save current state
+          try {
+              "$($currentSizes[$setupLog])`n$($currentSizes[$prereqLog])`n$stallCount" | Out-File -FilePath $tracker -Force -ErrorAction Stop
+          } catch {
+              # Silently ignore tracker write failures
+          }
+          
+          Write-Output "Setup in progress - continuing to monitor"
+          $host.SetShouldExit(2)
+          exit 2
+      } catch {
+          Write-Output "CRITICAL ERROR in monitor script: $_"
+          $host.SetShouldExit(2)
+          exit 2
+      }
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+- name: Start SCCM setup (attempt {{ attempt_number }})
+  ansible.windows.win_shell: |
+    Start-Process -FilePath "C:\ludus\sccm\cd.retail.LN\SMSSETUP\BIN\X64\setup.exe" -ArgumentList "/SCRIPT C:\ludus\sccm\ConfigMgrSetup.ini" -NoNewWindow -Wait
+  async: 7200
+  poll: 0
+  register: setup_job
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+- name: Wait for setup to actually start
+  ansible.windows.win_shell: |
+    $process = Get-Process -Name "setup" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*SMSSETUP*" }
+    if ($process) {
+      Write-Output "Setup process started with PID: $($process.Id)"
+      exit 0
+    }
+    exit 1
+  register: setup_start_check
+  until: setup_start_check.rc == 0
+  retries: 10
+  delay: 5
+  failed_when: false
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+- name: Check if setup started successfully
+  fail:
+    msg: "Setup process failed to start after 50 seconds"
+  when: setup_start_check.rc != 0
+
+- name: Monitor setup process (attempt {{ attempt_number }})
+  ansible.windows.win_shell: C:\sccm_monitor.ps1
+  register: monitor_result
+  until: monitor_result.rc == 0 or monitor_result.rc == 1
+  retries: 120 # Check for up to 2 hours
+  delay: 60 # Check every minute
+  failed_when: monitor_result.rc == 1
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+- name: Verify SMS_EXECUTIVE is running (attempt {{ attempt_number }})
+  ansible.windows.win_service_info:
+    name: SMS_EXECUTIVE
+  register: final_check
+  failed_when: 
+    - final_check.services | length == 0 or final_check.services[0].state != "started"
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"

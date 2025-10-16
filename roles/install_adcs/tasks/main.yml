@@ -1,11 +1,33 @@
 #Used from https://github.com/badsectorlabs/ludus_adcs/blob/main/tasks/main.yml
----
+- name: Check if ADCS is already configured
+  ansible.windows.win_powershell:
+    script: |
+      try {
+        $adcsConfig = Get-CACrlDistributionPoint -ErrorAction Stop
+        if ($adcsConfig) {
+          $Ansible.Result = @{
+            installed = $true
+          }
+        } else {
+          $Ansible.Result = @{
+            installed = $false
+          }
+        }
+      } catch {
+        $Ansible.Result = @{
+          installed = $false
+        }
+      }
+  register: adcs_status
+  
 - name: Install ADCS
   ansible.windows.win_feature:
     name: AD-Certificate
     state: present
     include_sub_features: true
     include_management_tools: true
+  register: adcs_feature
+  when: not adcs_status.result.installed
 
 - name: Install-ADCSCertificationAuthority-PS
   ansible.windows.win_powershell:
@@ -34,6 +56,9 @@
       domain_username: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
       domain_password: '{{ defaults.ad_domain_admin_password }}'
       ca_common_name: '{{ ludus_domain_netbios_name }}-CA'
+  register: adcs_install
+  when: not adcs_status.result.installed
   
 - name: Reboot after ADCS Installation
   ansible.windows.win_reboot:
+  when: adcs_feature.changed or (adcs_install.changed | default(false))

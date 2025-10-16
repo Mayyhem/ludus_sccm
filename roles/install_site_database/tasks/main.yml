@@ -1,0 +1,89 @@
+---
+- name: Check if MSSQL service is running
+  ansible.windows.win_service_info:
+    name: MSSQLSERVER  # or your instance name
+  register: mssql_service_info
+  failed_when: false
+
+- name: Run MSSQL setup tasks
+  block:
+    # Why do we have to do this lookup? Because if the user specified a hostname > 15 characters
+    # Windows will truncate the computer name to the first 15 (plus a '$') and computer names
+    # by default are not assigned a UPN in active directory
+    # This block must be in each SCCM role since we do not know which will be run first (the user may change the order of hosts)
+    - name: Set cache variable name
+      ansible.builtin.set_fact:
+        cache_var_name: "ludus_sccm_site_server_samaccountname_{{ ludus_sccm_site_server_hostname | replace('-', '_') }}"
+
+    - name: "Get sAMAccountName for {{ ludus_sccm_site_server_hostname }}"
+      when: hostvars["localhost"][cache_var_name] is undefined
+      block:
+        - name: "Query DC to get sAMAccountName for {{ ludus_sccm_site_server_hostname }}"
+          microsoft.ad.object_info:
+            filter: 'DNSHostName -like "{{ ludus_sccm_site_server_hostname }}*"'
+            properties: "sAMAccountName"
+          register: ludus_sccm_site_server_sam_lookup
+          # This delegation prevents us from having to install the ActiveDirectory powershell module on this host
+          delegate_to: "{{ ludus_dc_vm_name }}"
+
+        - name: "Show the sAMAccountName for {{ ludus_sccm_site_server_hostname }}"
+          ansible.builtin.debug:
+            msg: "{{ ludus_sccm_site_server_sam_lookup.objects | map(attribute='sAMAccountName') | first }}"
+
+        - name: Set the site server sAMAccountName
+          ansible.builtin.set_fact:
+            "{{ cache_var_name }}": "{{ ludus_sccm_site_server_sam_lookup.objects | map(attribute='sAMAccountName') | first }}"
+          delegate_to: localhost
+          delegate_facts: true # Use localhost to share this var between sccm hosts (like a cache)
+
+    - name: Install .NET Windows Features
+      ansible.windows.win_feature:
+        name:
+          - NET-Framework-Core
+          - NET-Framework-45-Core
+          - RSAT
+          - Web-WebServer
+          - Web-Mgmt-Console
+          - Web-Metabase
+          - Web-WMI
+        state: present
+
+    # Start SQL Server Install-------------------------------------------------------------------
+    - name: Begin SQL Server Install
+      ansible.builtin.include_tasks:
+        file: config_sql.yml
+
+  when: mssql_service_info.services | length == 0
+
+- name: Ensure the MSSQL service is started
+  ansible.windows.win_service:
+    name: MSSQLSERVER
+    state: started
+
+- name: Ensure the SQL Server Browser Service is started and set to automatic
+  ansible.windows.win_service:
+    name: SQLBrowser
+    state: started
+    start_mode: auto
+
+- name: Set RemoteRegistry to standard Automatic
+  ansible.windows.win_shell: sc.exe config RemoteRegistry start= auto
+
+- name: Start RemoteRegistry
+  ansible.windows.win_service:
+    name: RemoteRegistry
+    state: started
+
+- name: Re-check Remote Registry service status
+  ansible.windows.win_service_info:
+    name: RemoteRegistry
+  register: remote_reg_info
+
+- name: Show RemoteRegistry status
+  debug:
+    msg: "RemoteRegistry state: {{ remote_reg_info.services[0].state | default('not found') }}"
+
+- name: Fail if Remote Registry is not started
+  fail:
+    msg: "RemoteRegistry is not running after win_service"
+  when: remote_reg_info.services[0].state != 'started'

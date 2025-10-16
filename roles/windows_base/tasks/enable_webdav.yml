@@ -1,0 +1,37 @@
+---
+- name: Gather OS information
+  ansible.windows.win_shell: |
+    $os = Get-CimInstance Win32_OperatingSystem
+    $os.Caption
+  register: os_info
+  changed_when: false
+
+- name: Set OS type fact
+  set_fact:
+    is_windows_server: "{{ 'Server' in os_info.stdout }}"
+
+- name: Install WebDAV feature (Server only)
+  ansible.windows.win_feature:
+    name:
+      - WebDAV-Redirector
+    state: present
+  register: webdav_install
+  when: is_windows_server | bool
+
+- name: Reboot after WebDAV installation (Server only)
+  ansible.windows.win_reboot:
+  when: 
+    - is_windows_server | bool
+    - webdav_install.changed
+
+- name: Ensure WebClient service is enabled and started
+  ansible.windows.win_service:
+    name: WebClient
+    start_mode: auto
+    state: started
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"

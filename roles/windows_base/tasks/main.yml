@@ -1,0 +1,46 @@
+---
+- name: Check if role has already been executed
+  ansible.windows.win_stat:
+    path: "C:\\{{ role_name }}_completed.marker"
+  register: role_marker
+
+- name: Execute role tasks
+  block:
+    - name: Enable update service
+      ansible.windows.win_service:
+        name: Windows Update
+        state: started
+        start_mode: auto
+
+    - name: Disable Domain firewall
+      community.windows.win_firewall:
+        state: disabled
+        profiles:
+          - Domain
+          - Public
+          - Private
+
+    - name: Disable Real-Time Protection
+      ansible.windows.win_regedit:
+        path: "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows Defender\\Real-Time Protection"
+        name: DisableRealtimeMonitoring
+        data: 0x00000001
+        type: dword
+
+    - name: Disable AV
+      ansible.windows.win_regedit:
+        path: "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows Defender"
+        name: DisableAntiSpyware
+        data: 0x00000001
+        type: dword
+
+    - name: Enable WebClient
+      ansible.builtin.include_tasks:
+        file: enable_webdav.yml
+
+    - name: Create completion marker with timestamp
+      ansible.windows.win_copy:
+        content: "Role {{ role_name }} completed at {{ ansible_date_time.iso8601 }}"
+        dest: "C:\\{{ role_name }}_completed.marker"
+    
+  when: not role_marker.stat.exists

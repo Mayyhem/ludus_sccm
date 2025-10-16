@@ -1,6 +1,0 @@
----
-- name: Enable update service
-  ansible.windows.win_service:
-    name: Windows Update
-    state: started
-    start_mode: auto

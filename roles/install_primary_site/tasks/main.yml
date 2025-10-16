@@ -1,0 +1,155 @@
+---
+- name: Check that defined hostnames are <= 15 characters
+  ansible.builtin.fail:
+    msg: "{{ sccm_vm_hostname }} is longer than 15 characters. Due to requirements of SCCM this is not allowed."
+  when: 
+    - sccm_vm_hostname is defined
+    - sccm_vm_hostname != ""
+    - sccm_vm_hostname | length > 15
+  loop:
+    - "{{ ludus_sccm_site_server_hostname | default('') }}"
+    - "{{ ludus_sccm_distro_server_hostname | default('') }}"
+    - "{{ ludus_sccm_mgmt_server_hostname | default('') }}"
+    - "{{ ludus_sccm_sql_server_hostname | default('') }}"
+  loop_control:
+    loop_var: sccm_vm_hostname
+
+- name: Create System Management Container and Configure Permissions
+  ansible.windows.win_shell: |
+   C:\ludus\sccm\SystemManagement.ps1
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+- name: Extend Schema
+  ansible.windows.win_shell: |
+   C:\ludus\sccm\cd.retail.LN\SMSSETUP\BIN\X64\extadsch.exe
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+# Start SCCM Install-------------------------------------------------------------------
+- name: Check if SCCM is already installed
+  ansible.windows.win_service_info:
+    name: SMS_EXECUTIVE
+  register: sccm_service
+
+- name: Skip installation if SCCM is running
+  debug:
+    msg: "SMS_EXECUTIVE service is running - SCCM already installed, skipping installation"
+  when: 
+    - sccm_service.services | length > 0
+    - sccm_service.services[0].state == "started"
+
+- name: Initialize attempt counter
+  set_fact:
+    sccm_attempt_number: 1
+  when: sccm_service.services | length == 0 or sccm_service.services[0].state != "started"
+
+- name: Run SCCM installation with retry on stall
+  when: sccm_service.services | length == 0 or sccm_service.services[0].state != "started"
+  block:
+    - name: First installation attempt
+      include_tasks: install_sccm.yml
+      vars:
+        attempt_number: 1
+      
+  rescue:
+    - name: First stall detected - rebooting site server and retrying
+      debug:
+        msg: "Installation stalled on attempt 1 - rebooting site server"
+
+    - name: Reboot site server
+      ansible.windows.win_reboot:
+        reboot_timeout: 600
+        post_reboot_delay: 30
+
+    - name: Update attempt counter for retry
+      set_fact:
+        sccm_attempt_number: 2
+
+    - name: Second installation attempt
+      block:
+        - name: Retry installation after reboot
+          include_tasks: install_sccm.yml
+          vars:
+            attempt_number: 2
+      
+      rescue:
+        - name: Second stall detected - rebooting site server and site database server and retrying
+          debug:
+            msg: "Installation stalled on attempt 2 - rebooting site server and site database server"
+
+        - name: Reboot site server
+          ansible.windows.win_reboot:
+            reboot_timeout: 600
+            post_reboot_delay: 30
+
+        - name: Reboot site database server
+          ansible.windows.win_reboot:
+            reboot_timeout: 600
+            post_reboot_delay: 30
+          delegate_to: "{{ ludus_sccm_sql_server_hostname }}"
+          when: ludus_sccm_sql_server_hostname != inventory_hostname
+          vars:
+            ansible_connection: winrm
+            ansible_winrm_transport: ntlm
+            ansible_winrm_server_cert_validation: ignore
+            ansible_user: '{{ hostvars[inventory_hostname].ludus_domain_fqdn }}\{{ hostvars[inventory_hostname].defaults.ad_domain_admin }}'
+            ansible_password: '{{ hostvars[inventory_hostname].defaults.ad_domain_admin_password }}'
+
+        - name: Update attempt counter for final retry
+          set_fact:
+            sccm_attempt_number: 3
+
+        - name: Third installation attempt
+          block:
+            - name: Final retry installation after reboot
+              include_tasks: install_sccm.yml
+              vars:
+                attempt_number: 3
+          
+          rescue:
+            - name: Third attempt failed - giving up
+              fail:
+                msg: "SCCM installation stalled three times - failing playbook"
+
+- name: Cleanup tracker file
+  ansible.windows.win_file:
+    path: C:\sccm_stall_tracker.txt
+    state: absent
+  when: sccm_service.services | length == 0 or sccm_service.services[0].state != "started"
+  
+# Start CM Account Configuration-------------------------------------------------------
+- name: Begin CM Account Configuration
+  ansible.builtin.include_tasks:
+    file: cm_accounts.yml
+
+# Start NAA Configuration--------------------------------------------------------------
+- name: Begin NAA Configuration
+  ansible.builtin.include_tasks:
+    file: config_naa.yml
+  when: ludus_sccm_configure_naa
+
+# Configure Push Account---------------------------------------------------------------
+- name: Configure Push Client Installation
+  ansible.builtin.include_tasks:
+    file: client_push.yml
+  when: ludus_sccm_configure_client_push
+
+# Configure Discovery Methods----------------------------------------------------------
+- name: Configure Discovery Methods
+  ansible.builtin.include_tasks:
+    file: discovery_methods.yml
+
+# Configure PXE------------------------------------------------------------------------
+- name: Configure PXE
+  ansible.builtin.include_tasks:
+    file: config_pxe.yaml
+  when: ludus_sccm_enable_pxe

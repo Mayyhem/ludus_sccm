@@ -1,0 +1,105 @@
+---
+- name: Install Windows Features
+  ansible.windows.win_feature:
+    name:
+      - BITS
+      - BITS-IIS-Ext
+      - GPMC
+      - NET-Framework-Core
+      - NET-Framework-45-Core
+      - RDC
+      - RSAT
+      - Web-WebServer
+      - Web-Common-Http
+      - Web-Dir-Browsing
+      - Web-Http-Errors
+      - Web-Static-Content
+      - Web-Default-Doc
+      - Web-Http-Redirect
+      - Web-Mgmt-Tools
+      - Web-Mgmt-Console
+      - Web-Mgmt-Compat
+      - Web-Metabase
+      - Web-WMI
+      - Web-Windows-Auth
+      - Web-ISAPI-Ext
+      - Web-Scripting-Tools
+      - Web-Mgmt-Service
+    state: present
+
+- name: Get adksetup.exe
+  ansible.builtin.include_tasks:
+    file: download_file.yml
+  vars:
+    ludus_sccm_file_name: adksetup.exe
+    ludus_sccm_url: "{{ adksetup_url }}"
+    ludus_sccm_host_path: "C:\\ludus\\sccm"
+
+- name: Get adkwinpesetup.exe
+  ansible.builtin.include_tasks:
+    file: download_file.yml
+  vars:
+    ludus_sccm_file_name: adkwinpesetup.exe
+    ludus_sccm_url: "{{ adkwinpesetup_url }}"
+    ludus_sccm_host_path: "C:\\ludus\\sccm"
+
+- name: Install adksetup.exe
+  ansible.windows.win_command: 'C:\ludus\sccm\adksetup.exe /quiet /ceip off /features OptionId.DeploymentTools OptionId.UserStateMigrationTool'
+  args:
+    creates: "C:\\Program Files (x86)\\Windows Kits\\10\\Assessment and Deployment Kit\\User State Migration Tool\\amd64\\cmi2migxml.dll"
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+- name: Install adkwinpesetup
+  ansible.windows.win_command: 'C:\ludus\sccm\adkwinpesetup.exe /quiet /ceip off /features OptionId.WindowsPreinstallationEnvironment'
+  args:
+    creates: "C:\\Program Files (x86)\\Windows Kits\\10\\Assessment and Deployment Kit\\Windows Preinstallation Environment\\MakeWinPEMedia.cmd"
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+- name: Get Configmgr_2023
+  ansible.builtin.include_tasks:
+    file: download_file.yml
+  vars:
+    ludus_sccm_file_name: MCM_Configmgr_2303.exe
+    ludus_sccm_url: "{{ configmgr_url }}"
+    ludus_sccm_host_path: "C:\\ludus\\sccm"
+  when: ludus_sccm_is_primary_or_cas | default(true)
+
+- name: Unzip Setup
+  ansible.windows.win_command: 'C:\ludus\sccm\MCM_Configmgr_2303.exe /s -dC:\ludus\sccm'
+  args:
+    creates: C:\ludus\sccm\cd.retail.LN
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+  when: ludus_sccm_is_primary_or_cas | default(true)
+
+- name: Template ConfigMgrSetup.ini
+  ansible.windows.win_template:
+    src: "{{ ludus_sccm_win_sccm_config_default_template }}"
+    dest: "C:\\ludus\\sccm\\ConfigMgrSetup.ini"
+  when: ludus_sccm_is_primary_or_cas | default(true)
+
+- name: Template SystemManagement.ps1
+  ansible.windows.win_template:
+    src: "{{ ludus_sccm_system_management_template }}"
+    dest: "C:\\ludus\\sccm\\SystemManagement.ps1"
+  when: ludus_sccm_is_primary_or_cas | default(true)
+
+- name: Create SCCM pre-req folder
+  ansible.windows.win_file:
+    path: "{{ ludus_sccm_win_sccm_config_default_prereq_path }}"
+    state: directory
+  when: ludus_sccm_is_primary_or_cas | default(true)
