@@ -2,9 +2,9 @@
 dependencies: []
 
 galaxy_info:
-  role_name: prep_sms
+  role_name: install_secondary_site
   author: Chris Thompson
-  description: Install SCCM SMS Provider Prereqs
+  description: Install a Secondary Site for SCCM
   company: SpecterOps
   license: GPLv3
   min_ansible_version: "2.10"

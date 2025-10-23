@@ -40,20 +40,33 @@
     name: SMS_EXECUTIVE
   register: sccm_service
 
-- name: Skip installation if SCCM is running
+- name: Skip installation if SCCM is already installed
   debug:
     msg: "SMS_EXECUTIVE service is running - SCCM already installed, skipping installation"
   when: 
-    - sccm_service.services | length > 0
-    - sccm_service.services[0].state == "started"
+    - sccm_service.services | default([]) | length > 0
+    - sccm_service.services[0].state in ['running', 'started']
+
+- name: Set skip flag when SCCM service is running
+  set_fact:
+    skip_installation: true
+  when:
+    - sccm_service.services | default([]) | length > 0
+    - sccm_service.services[0].state in ['running', 'started']
+
+- name: Reboot the site server before installation to ensure clean state (avoid 'Failed to create process of SetupWpf.exe' errors)
+  ansible.windows.win_reboot:
+    reboot_timeout: 600
+    #post_reboot_delay: 30
+  when: not (skip_installation | default(false))
 
 - name: Initialize attempt counter
   set_fact:
     sccm_attempt_number: 1
-  when: sccm_service.services | length == 0 or sccm_service.services[0].state != "started"
+  when: not (skip_installation | default(false))
 
 - name: Run SCCM installation with retry on stall
-  when: sccm_service.services | length == 0 or sccm_service.services[0].state != "started"
+  when: not (skip_installation | default(false))
   block:
     - name: First installation attempt
       include_tasks: install_sccm.yml
@@ -68,7 +81,7 @@
     - name: Reboot site server
       ansible.windows.win_reboot:
         reboot_timeout: 600
-        post_reboot_delay: 30
+        #post_reboot_delay: 30
 
     - name: Update attempt counter for retry
       set_fact:
@@ -89,20 +102,18 @@
         - name: Reboot site server
           ansible.windows.win_reboot:
             reboot_timeout: 600
-            post_reboot_delay: 30
+            #post_reboot_delay: 30
 
         - name: Reboot site database server
-          ansible.windows.win_reboot:
-            reboot_timeout: 600
-            post_reboot_delay: 30
-          delegate_to: "{{ ludus_sccm_sql_server_hostname }}"
+          ansible.windows.win_shell: |
+            Restart-Computer -ComputerName "{{ ludus_sccm_sql_server_hostname }}.{{ ludus_domain_fqdn }}" -Force
           when: ludus_sccm_sql_server_hostname != inventory_hostname
           vars:
-            ansible_connection: winrm
-            ansible_winrm_transport: ntlm
-            ansible_winrm_server_cert_validation: ignore
-            ansible_user: '{{ hostvars[inventory_hostname].ludus_domain_fqdn }}\{{ hostvars[inventory_hostname].defaults.ad_domain_admin }}'
-            ansible_password: '{{ hostvars[inventory_hostname].defaults.ad_domain_admin_password }}'
+            ansible_become: true
+            ansible_become_method: runas
+            ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+            ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+            ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
         - name: Update attempt counter for final retry
           set_fact:
@@ -124,7 +135,7 @@
   ansible.windows.win_file:
     path: C:\sccm_stall_tracker.txt
     state: absent
-  when: sccm_service.services | length == 0 or sccm_service.services[0].state != "started"
+  when: not (skip_installation | default(false))
   
 # Start CM Account Configuration-------------------------------------------------------
 - name: Begin CM Account Configuration

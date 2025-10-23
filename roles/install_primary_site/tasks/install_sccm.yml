@@ -16,7 +16,6 @@
     Remove-Item "C:\ConfigMgrSetup.log" -Force -ErrorAction SilentlyContinue
     Remove-Item "C:\ConfigMgrPrereq.log" -Force -ErrorAction SilentlyContinue
     Remove-Item "C:\sccm_stall_tracker.txt" -Force -ErrorAction SilentlyContinue
-    Remove-Item "C:\sccm_failure_tracker.txt" -Force -ErrorAction SilentlyContinue
   failed_when: false
   changed_when: false
   vars:
@@ -49,7 +48,7 @@
           $prereqLogExists = Test-Path $prereqLog
           
           # Check if setup process is running
-          $setupProcess = Get-Process -Name "setup" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*SMSSETUP*" }
+          $setupProcess = Get-Process -Name "setupwpf" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*SMSSETUP*" }
           
           if (-not $setupProcess) {
               # Setup process not running - check if it ever started
@@ -207,22 +206,131 @@
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
-- name: Start SCCM setup (attempt {{ attempt_number }})
+- name: Initial cleanup before first attempt
+  block:
+    - name: Ensure scheduled task exists for SCCM deinstall
+      ansible.windows.win_shell: |
+        schtasks.exe /Create /TN 'SCCM-Setup-Deinstall' /TR 'C:\ludus\sccm\cd.retail.LN\SMSSETUP\BIN\X64\setup.exe /DEINSTALL' /SC ONCE /ST 00:00 /RL HIGHEST /RU '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}' /RP '{{ defaults.ad_domain_admin_password }}' /F
+      changed_when: true
+
+    - name: Start SCCM deinstall scheduled task
+      ansible.windows.win_shell: |
+        schtasks /Run /TN "SCCM-Setup-Deinstall"
+      register: uninstall_job_start
+      changed_when: true
+      failed_when: false
+
+    - name: Wait for setup to actually start
+      ansible.windows.win_shell: |
+        $process = Get-Process -Name "setup" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*SMSSETUP*" }
+        if ($process) {
+            Write-Output "Setup process started with PID: $($process.Id)"
+            exit 0
+        }
+        exit 1
+      register: setup_start_check
+      until: setup_start_check.rc == 0
+      retries: 10
+      delay: 5
+      failed_when: false
+      vars:
+        ansible_become: true
+        ansible_become_method: runas
+        ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+        ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+        ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+    - name: After 10 seconds, check ConfigMgrSetup.log for invalid uninstall message
+      ansible.windows.win_shell: |
+        Start-Sleep -Seconds 10
+        $log = "C:\\ConfigMgrSetup.log"
+        if (Test-Path $log) {
+          try {
+            $content = Get-Content $log -Raw -ErrorAction Stop
+          } catch {
+            $content = ""
+          }
+          if ($content -match "The setup command line option is not valid on this computer") {
+            Write-Output "Invalid command line option detected in ConfigMgrSetup.log"
+            exit 1
+          }
+        }
+        exit 0
+      register: uninstall_invalid_check
+      changed_when: false
+      failed_when: false
+      when: setup_start_check.rc == 0
+      vars:
+        ansible_become: true
+        ansible_become_method: runas
+        ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+        ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+        ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+    - name: Flag invalid uninstall if message found
+      set_fact:
+        sccm_uninstall_invalid: true
+      when:
+        - setup_start_check.rc == 0
+        - uninstall_invalid_check is defined
+        - uninstall_invalid_check.rc is defined and uninstall_invalid_check.rc == 1
+
+    - name: Kill setup.exe process tree (including setupwpf.exe) if uninstallation is invalid
+      ansible.windows.win_shell: |
+        Get-Process -Name "setup" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*SMSSETUP*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+        Get-Process -Name "setupwpf" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*SMSSETUP*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+      when: sccm_uninstall_invalid | default(false)
+      vars:
+        ansible_become: true
+        ansible_become_method: runas
+        ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+        ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+        ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+    - name: Wait for uninstall process to finish (if started and valid)
+      ansible.windows.win_shell: |
+        $process = Get-Process -Name "setup" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*SMSSETUP*" }
+        if ($process) { exit 1 } else { exit 0 }
+      register: uninstall_wait
+      until: uninstall_wait.rc == 0
+      retries: 360
+      delay: 10
+      failed_when: false
+      when:
+        - setup_start_check.rc == 0
+        - not (sccm_uninstall_invalid | default(false))
+      vars:
+        ansible_become: true
+        ansible_become_method: runas
+        ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+        ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+        ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+    - name: Reboot after successful uninstall before installation
+      ansible.windows.win_reboot:
+        reboot_timeout: 600
+        #post_reboot_delay: 30
+      when:
+        - setup_start_check.rc == 0
+        - not (sccm_uninstall_invalid | default(false))
+
+  when: attempt_number == 1
+
+- name: Ensure scheduled task exists for SCCM install (attempt {{ attempt_number }})
   ansible.windows.win_shell: |
-    Start-Process -FilePath "C:\ludus\sccm\cd.retail.LN\SMSSETUP\BIN\X64\setup.exe" -ArgumentList "/SCRIPT C:\ludus\sccm\ConfigMgrSetup.ini" -NoNewWindow -Wait
-  async: 7200
-  poll: 0
-  register: setup_job
-  vars:
-    ansible_become: true
-    ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
-    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
-    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+    schtasks.exe /Create /TN 'SCCM-Setup-Install' /TR 'C:\ludus\sccm\cd.retail.LN\SMSSETUP\BIN\X64\setupwpf.exe /SCRIPT C:\ludus\sccm\ConfigMgrSetup.ini' /SC ONCE /ST 00:00 /RL HIGHEST /RU '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}' /RP '{{ defaults.ad_domain_admin_password }}' /F
+  changed_when: true
+
+- name: Start SCCM install scheduled task (attempt {{ attempt_number }})
+  ansible.windows.win_shell: |
+    schtasks /Run /TN "SCCM-Setup-Install"
+  register: setup_job_start
+  changed_when: true
+  failed_when: false
 
 - name: Wait for setup to actually start
   ansible.windows.win_shell: |
-    $process = Get-Process -Name "setup" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*SMSSETUP*" }
+    $process = Get-Process -Name "setupwpf" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*SMSSETUP*" }
     if ($process) {
       Write-Output "Setup process started with PID: $($process.Id)"
       exit 0

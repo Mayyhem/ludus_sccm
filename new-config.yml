@@ -24,7 +24,6 @@
 
 # 10.X.12.0/24: Primary Site Two (PS2)
 #   10.X.12.50: ps2-pss
-#   10.X.12.51: ps2-db
 
 # All devices will become clients of SCCM site PS1 via automatic client push installation
 
@@ -73,7 +72,7 @@ ludus:
       block_internet: false
     vlan: 10
     ip_last_octet: 51
-    ram_gb: 4
+    ram_gb: 6
     ram_min_gb: 1
     cpus: 4
     windows:
@@ -87,7 +86,7 @@ ludus:
       fqdn: mayyhem.com
       role: member
     roles:
-      - synzack.ludus_sccm.windows_base
+      - name: synzack.ludus_sccm.windows_base
       - name: synzack.ludus_sccm.add_pss_to_admins
         # Wait for CAS-PSS to be online before adding to local admins
         depends_on:
@@ -162,13 +161,16 @@ ludus:
             role: synzack.ludus_sccm.install_site_database
           - vm_name: "{{ range_id }}-cas-scp"
             role: synzack.ludus_sccm.add_pss_to_admins
+          # Wait for PS1 to be installed to extend hierarchy to CAS
+          - vm_name: "{{ range_id }}-ps1-pss"
+            role: synzack.ludus_sccm.install_primary_site
     role_vars:
       ludus_sccm_sitecode: CAS
       ludus_sccm_sitename: Central Administration Site
-      ludus_sccm_win_sccm_config_default_template: CASConfigMgrSetup.ini.j2
+      ludus_sccm_child_site_server_hostname: 'ps1-pss.mayyhem.com'
+      ludus_sccm_win_sccm_config_default_template: ExtendPrimaryToCAS.ini.j2
       ludus_sccm_site_server_hostname: 'cas-pss'
       ludus_sccm_sql_server_hostname: 'cas-db'
-      ludus_sccm_sms_provider_hostname: 'cas-pss'
       ludus_sccm_scp_hostname: 'cas-scp'
       # Settings that should only be configured in primary sites
       ludus_sccm_configure_client_push: false
@@ -197,7 +199,7 @@ ludus:
       block_internet: false
     vlan: 11
     ip_last_octet: 51
-    ram_gb: 4
+    ram_gb: 6
     ram_min_gb: 1
     cpus: 4
     windows:
@@ -426,8 +428,6 @@ ludus:
             role: synzack.ludus_sccm.add_pss_to_admins
           - vm_name: "{{ range_id }}-ps1-sms"
             role: synzack.ludus_sccm.add_pss_to_admins
-          - vm_name: "{{ range_id }}-cas-pss"
-            role: synzack.ludus_sccm.install_primary_site
           - vm_name: "{{ range_id }}-ps1-dp"
             role: synzack.ludus_sccm.prep_dp
           - vm_name: "{{ range_id }}-ps1-dp"
@@ -438,10 +438,15 @@ ludus:
             role: synzack.ludus_sccm.add_pss_to_admins
           - vm_name: "{{ range_id }}-ps1-dev"
             role: synzack.ludus_sccm.add_pss_to_admins
-          - vm_name: "{{ range_id }}-ps2-pss"
-            role: synzack.ludus_sccm.windows_base
-          - vm_name: "{{ range_id }}-ps2-db"
-            role: synzack.ludus_sccm.windows_base
+          - vm_name: "{{ range_id }}-ps1-sec"
+            role: synzack.ludus_sccm.add_pss_to_admins
+      - name: synzack.ludus_sccm.install_sms
+        # Wait for SMS prep and site installation before installing remote SMS provider
+        depends_on:
+          - vm_name: "{{ range_id }}-ps1-sms"
+            role: synzack.ludus_sccm.prep_sms
+          - vm_name: "{{ range_id }}-ps1-sms"
+            role: synzack.ludus_sccm.add_pss_to_admins
       - name: synzack.ludus_sccm.install_passive_site_server
         # Wait for content lib share, site database, and server prep to be done before installing passive site server
         depends_on:
@@ -453,22 +458,31 @@ ludus:
             role: synzack.ludus_sccm.prep_siteserver        
           - vm_name: "{{ range_id }}-ps1-psv"
             role: synzack.ludus_sccm.add_pss_to_admins
+      - name: synzack.ludus_sccm.install_secondary_site
+        # Wait for secondary site server prep and site installation to be done before installing secondary site
+        depends_on:
+          - vm_name: "{{ range_id }}-ps1-sec"
+            role: synzack.ludus_sccm.add_pss_to_admins
     role_vars:
-      # This is a child site of the CAS
+      # This is a child site of CAS
       ludus_sccm_parent_sitecode: 'CAS'
       ludus_sccm_parent_site_server_hostname: 'cas-pss'
+      ludus_sccm_add_accounts_to_admins: 'cas-pss$'
       ludus_sccm_win_sccm_config_default_template: ChildSiteConfigMgrSetup.ini.j2
       # Primary site specific settings (overrides defaults)
-      ludus_sccm_sitecode: PS1           
-      ludus_sccm_sitename: Primary Site One  
+      ludus_sccm_sitecode: PS1
+      ludus_sccm_sitename: Primary Site One
       ludus_sccm_site_server_hostname: 'ps1-pss'
       ludus_sccm_passive_hostname: 'ps1-psv'
       ludus_sccm_distro_server_hostname: 'ps1-dp'
       ludus_sccm_mgmt_server_hostname: 'ps1-mp'
       ludus_sccm_sql_server_hostname: 'ps1-db'
       ludus_sccm_sms_provider_hostname: 'ps1-sms'
+      # Secondary site specific settings
+      ludus_sccm_secondary_sitecode: 'SEC'
+      ludus_sccm_secondary_siteserver_fqdn: 'ps1-sec.mayyhem.com'
 
-  # Client Device in PS1 Site
+  # PS1-DEV: Development Workstation
   - vm_name: "{{ range_id }}-ps1-dev"
     hostname: "ps1-dev"
     template: win11-22h2-x64-enterprise-template
@@ -506,27 +520,22 @@ ludus:
             role: synzack.ludus_sccm.windows_base
     role_vars:
       ludus_sccm_site_server_hostname: 'ps1-pss'
-  
 
-############################
-## Primary Site Two (PS2) ##
-############################
-
-  # PS2-DB: Site Database Server
-  - vm_name: "{{ range_id }}-ps2-db"
-    hostname: "ps2-db"
+  # PS1-SEC: Secondary Site Server
+  - vm_name: "{{ range_id }}-ps1-sec"
+    hostname: "ps1-sec" 
     template: win2022-server-x64-template
     testing:
       snapshot: true
       block_internet: false
-    vlan: 12
-    ip_last_octet: 51
-    ram_gb: 4
+    vlan: 11
+    ip_last_octet: 200
+    ram_gb: 6
     ram_min_gb: 1
-    cpus: 4
+    cpus: 2
     windows:
       chocolatey_packages:
-        - procmon        
+        - procmon
         - sql-server-management-studio
         - systeminformer-nightlybuilds
         - wireshark
@@ -536,19 +545,21 @@ ludus:
       role: member
     roles:
       - synzack.ludus_sccm.windows_base
+      - synzack.ludus_sccm.ludus_sccm_prep_siteserver
       - name: synzack.ludus_sccm.add_pss_to_admins
-        # Wait for PS2-PSS to be online before adding to local admins
+        # Wait for PS1-PSS to be online before adding to local admins
         depends_on:
-          - vm_name: "{{ range_id }}-ps2-pss"
+          - vm_name: "{{ range_id }}-ps1-pss"
             role: synzack.ludus_sccm.windows_base
-      - synzack.ludus_sccm.install_site_database
     role_vars:
-      ludus_sccm_site_server_hostname: 'ps2-pss'    
-      ludus_sccm_sql_server_hostname: 'ps2-db'
-      ludus_sccm_sql_additional_sysadmin_accounts: 'MAYYHEM\domainadmin'
+      # This is a secondary child site of PS1
+      ludus_sccm_site_server_hostname: 'ps1-pss'
 
+############################
+## Primary Site Two (PS2) ##
+############################
 
-  # PS2-PSS: Primary Site Server
+  # PS2-PSS: Standalone Primary Site Server
   - vm_name: "{{ range_id }}-ps2-pss"
     hostname: "ps2-pss" 
     template: win2022-server-x64-template
@@ -573,17 +584,14 @@ ludus:
     roles:
       - synzack.ludus_sccm.windows_base
       - synzack.ludus_sccm.prep_siteserver
+      - synzack.ludus_sccm.install_site_database
       - name: synzack.ludus_sccm.install_primary_site
         # Wait for the CAS and site database to be online before installing site
         depends_on:
-          - vm_name: "{{ range_id }}-ps2-db"
-            role: synzack.ludus_sccm.install_site_database
-          - vm_name: "{{ range_id }}-ps2-db"
-            role: synzack.ludus_sccm.add_pss_to_admins
           - vm_name: "{{ range_id }}-cas-pss"
             role: synzack.ludus_sccm.install_primary_site
     role_vars:
-      # This is a child site of the CAS
+      # This is a standalone primary child site of CAS
       ludus_sccm_parent_sitecode: 'CAS'
       ludus_sccm_parent_site_server_hostname: 'cas-pss'
       ludus_sccm_win_sccm_config_default_template: ChildSiteConfigMgrSetup.ini.j2
@@ -591,8 +599,7 @@ ludus:
       ludus_sccm_sitecode: PS2
       ludus_sccm_sitename: Primary Site Two
       ludus_sccm_site_server_hostname: 'ps2-pss'
-      ludus_sccm_sql_server_hostname: 'ps2-db'
-      ludus_sccm_sms_provider_hostname: 'ps2-pss'
+      ludus_sccm_sql_server_hostname: 'ps2-pss'
       ludus_sccm_configure_naa: false
       # Disable client push to prevent conflicts with PS1 site
       ludus_sccm_configure_client_push: false

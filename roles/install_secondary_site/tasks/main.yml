@@ -1,0 +1,12 @@
+---
+- name: Create SCCM Secondary Site
+  secondarysite:
+    parent_site_code: '{{ ludus_sccm_sitecode }}'
+    sitesystem_name: '{{ ludus_sccm_secondary_siteserver_fqdn }}'
+    site_code: '{{ ludus_sccm_secondary_sitecode }}'
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"

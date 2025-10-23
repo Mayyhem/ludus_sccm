@@ -1,10 +1,5 @@
 ---
 ludus_install_directory: /opt/ludus
 ludus_sccm_host_path: "C:\\ludus\\sccm"
-ludus_sccm_win_sccm_config_default_prereq_path: C:\SCCM
-ludus_sccm_system_management_template: SystemManagement.ps1.j2
-ludus_sccm_win_sccm_config_default_template: ConfigMgrSetup.ini.j2
-# https://www.microsoft.com/en-us/evalcenter/download-microsoft-endpoint-configuration-manager
-configmgr_url: https://download.microsoft.com/download/2/e/5/2e5738c0-1489-4420-ab4b-e5313b9fcec4/MCM_Configmgr_2403.exe
 adksetup_url: https://download.microsoft.com/download/e/8/b/e8bec6c1-8153-408d-96b1-ee2985a600ad/adk/adksetup.exe
 adkwinpesetup_url: https://download.microsoft.com/download/17ac4263-5816-4f1b-8131-87c4d5a3331f/adkwinpeaddons/adkwinpesetup.exe

@@ -3,7 +3,7 @@
 
 $spec = @{
     options = @{
-	move_contentlib_to = @{ type = 'str'; required = $true }
+	    move_contentlib_to = @{ type = 'str'; required = $true }
         sitesystem_name = @{ type = 'str'; required = $true }
         site_code = @{ type = 'str'; required = $true }
     }

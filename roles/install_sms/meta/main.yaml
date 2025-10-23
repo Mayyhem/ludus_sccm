@@ -2,9 +2,9 @@
 dependencies: []
 
 galaxy_info:
-  role_name: prep_sms
+  role_name: install_sms
   author: Chris Thompson
-  description: Install SCCM SMS Provider Prereqs
+  description: Add a SCCM SMS Provider
   company: SpecterOps
   license: GPLv3
   min_ansible_version: "2.10"
