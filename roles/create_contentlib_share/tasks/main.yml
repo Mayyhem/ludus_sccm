@@ -34,4 +34,4 @@
     name: ContentLib
     path: C:\Share\ContentLib
     list: true
-    full: '{{ ludus_domain_netbios_name }}\{{ hostvars["localhost"]["ludus_sccm_site_server_samaccountname"] }}'
+    full: "{{ ludus_domain_netbios_name }}\\{{ hostvars['localhost']['ludus_sccm_site_server_samaccountname'] }},BUILTIN\\Administrators"

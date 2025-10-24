@@ -175,7 +175,7 @@ ludus:
       # Settings that should only be configured in primary sites
       ludus_sccm_configure_client_push: false
       ludus_sccm_enable_pxe: false
-      ludus_sccm_enable_naa: false
+      ludus_sccm_configure_naa: false
       ludus_sccm_configure_task_sequence: false
       ludus_sccm_configure_domain_join: false
       ludus_sccm_enable_active_directory_forest_discovery: false
@@ -478,6 +478,8 @@ ludus:
       ludus_sccm_mgmt_server_hostname: 'ps1-mp'
       ludus_sccm_sql_server_hostname: 'ps1-db'
       ludus_sccm_sms_provider_hostname: 'ps1-sms'
+      # Passive site specific settings
+      ludus_sccm_contentlib_hostname: 'ps1-lib'
       # Secondary site specific settings
       ludus_sccm_secondary_sitecode: 'SEC'
       ludus_sccm_secondary_siteserver_fqdn: 'ps1-sec.mayyhem.com'
@@ -608,4 +610,3 @@ ludus:
 notify:
   urls:
     - "ntfy://ntfy.sh/mayyhem-harbinger"
-    #- "ntfy://Mayyhem:zhk%2Ecpr4vxy%40PUG6jpb@ntfy.sh/mayyhem-harbinger"

@@ -146,13 +146,13 @@
 - name: Begin NAA Configuration
   ansible.builtin.include_tasks:
     file: config_naa.yml
-  when: ludus_sccm_configure_naa
+  when: ludus_sccm_configure_naa == true
 
 # Configure Push Account---------------------------------------------------------------
 - name: Configure Push Client Installation
   ansible.builtin.include_tasks:
     file: client_push.yml
-  when: ludus_sccm_configure_client_push
+  when: ludus_sccm_configure_client_push == true
 
 # Configure Discovery Methods----------------------------------------------------------
 - name: Configure Discovery Methods
@@ -163,4 +163,4 @@
 - name: Configure PXE
   ansible.builtin.include_tasks:
     file: config_pxe.yaml
-  when: ludus_sccm_enable_pxe
+  when: ludus_sccm_enable_pxe == true

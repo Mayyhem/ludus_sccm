@@ -1,7 +1,7 @@
 ---
 - name: Start SCCM setup
   ansible.windows.win_shell: |
-    'C:\Program Files\Microsoft Configuration Manager\bin\X64\setup.exe' /SDKINST {{ ludus_sccm_sms_provider_hostname }}.{{ ludus_domain_fqdn }}
+    & 'C:\Program Files\Microsoft Configuration Manager\bin\X64\setup.exe' --% /SDKINST {{ ludus_sccm_sms_provider_hostname }}.{{ ludus_domain_fqdn }}
   register: setup_job
   vars:
     ansible_become: true

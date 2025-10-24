@@ -28,7 +28,7 @@ Move-CMContentLibrary -NewLocation $module.Params.move_contentlib_to -SiteCode $
 $i = 0
 $lastMoveProgress = 0
 do {
-    $moveStatus = Get-CMSite -SiteCode $site_code
+    $moveStatus = Get-CMSite -SiteCode $module.Params.site_code
     $moveProgress = $moveStatus.ContentLibraryMoveProgress
 
     if ($lastMoveProgress -eq $moveProgress) {
@@ -45,18 +45,18 @@ do {
     }
 
     Start-Sleep -Seconds 30
-    Write-Host "Moving Content Library to $move_contentlib_to, Current Progress: $moveProgress%" -RetrySeconds 30
+    Write-Host ("Moving Content Library to {0}, Current Progress: {1}%" -f $module.Params.move_contentlib_to, $moveProgress)
 
     if ($moveStatus.ContentLibraryStatus -eq 3) {
         Write-Host "Content Library Location empty after move. Retrying Content Library Move"
-        Move-CMContentLibrary -NewLocation $move_contentlib_to -SiteCode $site_code -Verbose
+        Move-CMContentLibrary -NewLocation $module.Params.move_contentlib_to -SiteCode $module.Params.site_code -Verbose
     }
 
     $lastMoveProgress = $moveStatus.ContentLibraryMoveProgress
 
 } until ($moveProgress -eq 100 -and (-not [string]::IsNullOrWhitespace($moveStatus.ContentLibraryLocation)))
 if ($bailOut) {
-    Write-Host "Gave up after 1 hour on Content Library move after move progress stalled at $moveProgress%. Exiting." -Failure
+    Write-Host ("Gave up after 1 hour on Content Library move after move progress stalled at {0}%. Exiting." -f $moveProgress)
     return
 }
 else {
