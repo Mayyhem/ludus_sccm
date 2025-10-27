@@ -1,8 +1,46 @@
 ---
+- name: Check if target SMS Provider already exists
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $target = "{{ ludus_sccm_sms_provider_hostname }}.{{ ludus_domain_fqdn }}"
+      $targetShort = "{{ ludus_sccm_sms_provider_hostname }}"
+      $siteServer = "{{ ludus_sccm_site_server_hostname }}.{{ ludus_domain_fqdn }}"
+      try {
+        $providers = Get-CimInstance -Namespace root\SMS -ClassName SMS_ProviderLocation -ComputerName $siteServer -ErrorAction Stop
+        $exists = $providers | Where-Object { $_.Machine -ieq $target -or $_.Machine -ieq $targetShort }
+        $result = @{ exists = [bool]($exists -ne $null) }
+      }
+      catch {
+        # If the namespace/class isn't available yet on the site server, default to not existing so installation proceeds
+        $result = @{ exists = $false }
+      }
+      $result | ConvertTo-Json -Compress
+  register: sms_provider_check
+  changed_when: false
+  failed_when: false
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+- name: Set fact for SMS Provider existence
+  ansible.builtin.set_fact:
+    sms_provider_exists: "{{ (sms_provider_check.output | default([]) | join('') | length > 0) and ((sms_provider_check.output | default([]) | join('') | from_json).exists | default(false)) }}"
+  changed_when: false
+
+- name: Skip install when provider already present
+  ansible.builtin.debug:
+    msg: "SMS Provider already installed on {{ ludus_sccm_sms_provider_hostname }}.{{ ludus_domain_fqdn }}; skipping setup."
+  when: sms_provider_exists | bool
+
 - name: Start SCCM setup
   ansible.windows.win_shell: |
     & 'C:\Program Files\Microsoft Configuration Manager\bin\X64\setup.exe' --% /SDKINST {{ ludus_sccm_sms_provider_hostname }}.{{ ludus_domain_fqdn }}
   register: setup_job
+  when: not (sms_provider_exists | bool)
   vars:
     ansible_become: true
     ansible_become_method: runas

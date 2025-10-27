@@ -108,7 +108,7 @@
 
 - name: Ensure scheduled task exists for Passive Site Server install
   ansible.windows.win_shell: |
-    schtasks.exe /Create /TN 'SCCM-Passive-Install' /TR 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\sccm_passive_install.ps1 -MoveContentLibTo "\\{{ ludus_sccm_contentlib_hostname }}.\{{ ludus_domain_fqdn }}\ContentLib" -SiteSystemName "{{ ludus_sccm_contentlib_hostname }}" -SiteCode "{{ ludus_sccm_sitecode }}"' /SC ONCE /ST 00:00 /RL HIGHEST /RU '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}' /RP '{{ defaults.ad_domain_admin_password }}' /F
+    schtasks.exe /Create /TN 'SCCM-Passive-Install' /TR 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\sccm_passive_install.ps1 -MoveContentLibTo "\\{{ ludus_sccm_contentlib_hostname }}.{{ ludus_domain_fqdn }}\Share\ContentLib" -SiteSystemName "{{ ludus_sccm_contentlib_hostname }}" -SiteCode "{{ ludus_sccm_sitecode }}"' /SC ONCE /ST 00:00 /RL HIGHEST /RU '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}' /RP '{{ defaults.ad_domain_admin_password }}' /F
   changed_when: true
 
 - name: Start passive site install scheduled task

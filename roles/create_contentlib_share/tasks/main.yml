@@ -31,7 +31,7 @@
 
 - name: Add ContentLib share
   ansible.windows.win_share:
-    name: ContentLib
-    path: C:\Share\ContentLib
+    name: Share
+    path: C:\Share
     list: true
     full: "{{ ludus_domain_netbios_name }}\\{{ hostvars['localhost']['ludus_sccm_site_server_samaccountname'] }},BUILTIN\\Administrators"
