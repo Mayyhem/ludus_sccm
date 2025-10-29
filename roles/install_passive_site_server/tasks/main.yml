@@ -1,8 +1,9 @@
 ---
-- name: Clear old passive install logs and status
+# Step 1: Move Content Library via scheduled task
+- name: Clear old move ContentLib logs and status
   ansible.windows.win_shell: |
-    Remove-Item "C:\sccm_passive_install.log" -Force -ErrorAction SilentlyContinue
-    Remove-Item "C:\sccm_passive_install.status" -Force -ErrorAction SilentlyContinue
+    Remove-Item "C:\sccm_move_contentlib.log" -Force -ErrorAction SilentlyContinue
+    Remove-Item "C:\sccm_move_contentlib.status" -Force -ErrorAction SilentlyContinue
   failed_when: false
   changed_when: false
   vars:
@@ -12,34 +13,28 @@
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
-- name: Create passive site server install script
+# #https://github.com/vinaypamnani-msft/memlabs/blob/0d90a7fb968c864ed2e5391606b103f5b520e2e2/vmbuild/DSC/phases/InstallPassiveSiteServer.ps1
+- name: Create move Content Library script
   ansible.windows.win_copy:
-    dest: C:\sccm_passive_install.ps1
+    dest: C:\sccm_move_contentlib.ps1
     force: yes
     content: |
       param(
           [Parameter(Mandatory = $true)][string]$MoveContentLibTo,
-          [Parameter(Mandatory = $true)][string]$SiteSystemName,
           [Parameter(Mandatory = $true)][string]$SiteCode
       )
 
-      $log = 'C:\sccm_passive_install.log'
-      $status = 'C:\sccm_passive_install.status'
+      $log = 'C:\sccm_move_contentlib.log'
+      $status = 'C:\sccm_move_contentlib.status'
 
-      function Write-Log {
-          param([string]$Message)
-          $ts = Get-Date -Format s
-          try { "$ts $Message" | Out-File -FilePath $log -Append -Encoding utf8 } catch {}
-      }
+      function Write-Log { param([string]$Message); $ts = Get-Date -Format s; try { "$ts $Message" | Out-File -FilePath $log -Append -Encoding utf8 } catch {} }
 
-      # Fresh start
       try { Remove-Item $log -Force -ErrorAction SilentlyContinue } catch {}
       try { Remove-Item $status -Force -ErrorAction SilentlyContinue } catch {}
 
       try {
-          Write-Log "Starting passive site server setup for site code [$SiteCode] on [$SiteSystemName]"
+          Write-Log "Starting Content Library move to [$MoveContentLibTo] for site [$SiteCode]"
 
-          # Load Configuration Manager module and connect to site
           $cmModule = "C:\\Program Files (x86)\\Microsoft Configuration Manager\\AdminConsole\\bin\\ConfigurationManager.psd1"
           if (-not (Test-Path $cmModule)) { throw "ConfigurationManager.psd1 not found at $cmModule" }
           Import-Module $cmModule -ErrorAction Stop
@@ -48,57 +43,40 @@
               $ProviderMachineName = (Get-ItemProperty HKLM:\SOFTWARE\Wow6432Node\Microsoft\ConfigMgr10\AdminUI\Connection -Name Server).Server
               New-PSDrive -Name $SiteCode -PSProvider CMSite -Root $ProviderMachineName | Out-Null
           }
-          Set-Location ("{0}:\" -f $SiteCode)
+          Set-Location ("{0}:\\" -f $SiteCode)
 
-          # Move Content Library with progress checks (up to 1 hour)
-          Write-Log "Moving Content Library to $MoveContentLibTo"
+          # If already at destination, skip
+          $site = Get-CMSite -SiteCode $SiteCode
+          if ($site.ContentLibraryLocation -and ($site.ContentLibraryLocation.TrimEnd('\\') -ieq $MoveContentLibTo.TrimEnd('\\'))) {
+              Write-Log "Content Library already at destination [$MoveContentLibTo]"
+              "SUCCESS" | Out-File -FilePath $status -Force -Encoding utf8
+              exit 0
+          }
+
+          # Validate UNC path exists and is writable
+          if (-not (Test-Path -Path $MoveContentLibTo)) { throw "The specified location '$MoveContentLibTo' does not exist or is inaccessible." }
+          try { $tf = Join-Path $MoveContentLibTo ("perm_test_{0}.txt" -f ([Guid]::NewGuid())); "test" | Out-File -FilePath $tf -Encoding utf8; Remove-Item $tf -Force -ErrorAction SilentlyContinue } catch { throw "Write test to '$MoveContentLibTo' failed. Verify permissions." }
+
+          Write-Log "Initiating Content Library move"
           Move-CMContentLibrary -NewLocation $MoveContentLibTo -SiteCode $SiteCode -ErrorAction Stop
 
-          $i = 0
-          $lastMoveProgress = 0
-          $bailOut = $false
+          $i = 0; $lastMoveProgress = 0; $bailOut = $false
           do {
               $moveStatus = Get-CMSite -SiteCode $SiteCode
               $moveProgress = $moveStatus.ContentLibraryMoveProgress
-
               if ($lastMoveProgress -eq $moveProgress) { $i++ } else { $i = 0 }
-
-              if ($i -gt 120) { # ~60 minutes (30s * 120)
-                  $bailOut = $true
-                  break
-              }
-
+              if ($i -gt 120) { $bailOut = $true; break }
               Start-Sleep -Seconds 30
               Write-Log ("Moving Content Library, Progress: {0}%" -f $moveProgress)
-
-              if ($moveStatus.ContentLibraryStatus -eq 3) {
-                  Write-Log "Content Library Location empty after move. Retrying Content Library Move"
-                  Move-CMContentLibrary -NewLocation $MoveContentLibTo -SiteCode $SiteCode -Verbose -ErrorAction Stop
-              }
-
+              if ($moveStatus.ContentLibraryStatus -eq 3) { Write-Log "Retrying Content Library move"; Move-CMContentLibrary -NewLocation $MoveContentLibTo -SiteCode $SiteCode -Verbose -ErrorAction Stop }
               $lastMoveProgress = $moveStatus.ContentLibraryMoveProgress
           } until ($moveProgress -eq 100 -and (-not [string]::IsNullOrWhitespace($moveStatus.ContentLibraryLocation)))
 
-          if ($bailOut) { throw ("Gave up after 1 hour on Content Library move after progress stalled at {0}%" -f $moveProgress) }
+          if ($bailOut) { throw ("Gave up after 1 hour; progress stalled at {0}%" -f $moveProgress) }
           Write-Log ("Content Library moved to {0}" -f (Get-CMSite -SiteCode $SiteCode).ContentLibraryLocation)
-
-          # Create Site System Server and add Passive Site
-          $installPath = "C:\\Program Files\\Microsoft Configuration Manager"
-          Write-Log "Creating site system server $SiteSystemName"
-          New-CMSiteSystemServer -SiteCode $SiteCode -SiteSystemServerName $SiteSystemName -ErrorAction Stop | Out-Null
-
-          Write-Log "Adding passive site on $SiteSystemName"
-          Add-CMPassiveSite -SiteCode $SiteCode -SiteSystemServerName $SiteSystemName -InstallDirectory $installPath -SourceFilePathOption CopySourceFileFromActiveSite -ErrorAction Stop | Out-Null
-
-          Write-Log "Passive site server creation initiated successfully"
           "SUCCESS" | Out-File -FilePath $status -Force -Encoding utf8
           exit 0
-      } catch {
-          $msg = "ERROR: $($_.Exception.Message)"
-          Write-Log $msg
-          try { $msg | Out-File -FilePath $status -Force -Encoding utf8 } catch {}
-          exit 1
-      }
+      } catch { $msg = "ERROR: $($_.Exception.Message)"; Write-Log $msg; try { $msg | Out-File -FilePath $status -Force -Encoding utf8 } catch {}; exit 1 }
   vars:
     ansible_become: true
     ansible_become_method: runas
@@ -106,21 +84,21 @@
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
-- name: Ensure scheduled task exists for Passive Site Server install
+- name: Schedule Content Library move task
   ansible.windows.win_shell: |
-    schtasks.exe /Create /TN 'SCCM-Passive-Install' /TR 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\sccm_passive_install.ps1 -MoveContentLibTo "\\{{ ludus_sccm_contentlib_hostname }}.{{ ludus_domain_fqdn }}\Share\ContentLib" -SiteSystemName "{{ ludus_sccm_contentlib_hostname }}" -SiteCode "{{ ludus_sccm_sitecode }}"' /SC ONCE /ST 00:00 /RL HIGHEST /RU '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}' /RP '{{ defaults.ad_domain_admin_password }}' /F
+    schtasks.exe /Create /TN 'SCCM-Passive-MoveContentLib' /TR 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\sccm_move_contentlib.ps1 -MoveContentLibTo "\\{{ ludus_sccm_contentlib_hostname }}.{{ ludus_domain_fqdn }}\Share\ContentLib" -SiteCode "{{ ludus_sccm_sitecode }}"' /SC ONCE /ST 00:00 /RL HIGHEST /RU '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}' /RP '{{ defaults.ad_domain_admin_password }}' /F
   changed_when: true
 
-- name: Start passive site install scheduled task
+- name: Start Content Library move task
   ansible.windows.win_shell: |
-    schtasks /Run /TN "SCCM-Passive-Install"
-  register: passive_setup_job_start
+    schtasks /Run /TN "SCCM-Passive-MoveContentLib"
+  register: cl_move_job_start
   changed_when: true
   failed_when: false
 
-- name: Wait for passive install log to appear
+- name: Wait for move log to appear
   ansible.windows.win_wait_for:
-    path: C:\sccm_passive_install.log
+    path: C:\sccm_move_contentlib.log
     state: present
     timeout: 120
   vars:
@@ -130,24 +108,264 @@
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
-- name: Monitor passive site install until completion or failure
+- name: Monitor Content Library move
   ansible.windows.win_shell: |
-    $statusPath = 'C:\sccm_passive_install.status'
-    if (Test-Path $statusPath) {
-      try { $s = Get-Content $statusPath -Raw -ErrorAction Stop } catch { $s = '' }
+    $p = 'C:\sccm_move_contentlib.status'
+    if (Test-Path $p) {
+      try { $s = Get-Content $p -Raw -ErrorAction Stop } catch { $s = '' }
       if ($s -match '^SUCCESS') { exit 0 }
       if ($s -match '^ERROR') {
-        Write-Output "\n=== Last 100 lines of sccm_passive_install.log ==="
-        try { Get-Content 'C:\sccm_passive_install.log' -Tail 100 -ErrorAction Stop | ForEach-Object { Write-Output $_ } } catch {}
+        Write-Output "\n=== Last 100 lines of sccm_move_contentlib.log ==="
+        try { Get-Content 'C:\sccm_move_contentlib.log' -Tail 100 -ErrorAction Stop | ForEach-Object { Write-Output $_ } } catch {}
         exit 1
       }
     }
     exit 2
-  register: passive_monitor_result
-  until: passive_monitor_result.rc == 0 or passive_monitor_result.rc == 1
-  retries: 180  # up to 3 hours
-  delay: 60     # check every minute
-  failed_when: passive_monitor_result.rc == 1
+  register: cl_move_monitor
+  until: cl_move_monitor.rc == 0 or cl_move_monitor.rc == 1
+  retries: 180
+  delay: 60
+  failed_when: cl_move_monitor.rc == 1
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+# Step 2: Create Site System Server via scheduled task
+- name: Clear old site system logs and status
+  ansible.windows.win_shell: |
+    Remove-Item "C:\sccm_create_sitesystem.log" -Force -ErrorAction SilentlyContinue
+    Remove-Item "C:\sccm_create_sitesystem.status" -Force -ErrorAction SilentlyContinue
+  failed_when: false
+  changed_when: false
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+- name: Create site system script
+  ansible.windows.win_copy:
+    dest: C:\sccm_create_sitesystem.ps1
+    force: yes
+    content: |
+      param(
+          [Parameter(Mandatory = $true)][string]$SiteSystemName,
+          [Parameter(Mandatory = $true)][string]$SiteCode
+      )
+
+      $log = 'C:\sccm_create_sitesystem.log'
+      $status = 'C:\sccm_create_sitesystem.status'
+      function Write-Log { param([string]$Message); $ts = Get-Date -Format s; try { "$ts $Message" | Out-File -FilePath $log -Append -Encoding utf8 } catch {} }
+      try { Remove-Item $log -Force -ErrorAction SilentlyContinue } catch {}
+      try { Remove-Item $status -Force -ErrorAction SilentlyContinue } catch {}
+
+      try {
+          Write-Log "Creating site system server [$SiteSystemName] for site [$SiteCode]"
+          $cmModule = "C:\\Program Files (x86)\\Microsoft Configuration Manager\\AdminConsole\\bin\\ConfigurationManager.psd1"
+          if (-not (Test-Path $cmModule)) { throw "ConfigurationManager.psd1 not found at $cmModule" }
+          Import-Module $cmModule -ErrorAction Stop
+          if ((Get-PSDrive -Name $SiteCode -PSProvider CMSite -ErrorAction SilentlyContinue) -eq $null) { $ProviderMachineName = (Get-ItemProperty HKLM:\SOFTWARE\Wow6432Node\Microsoft\ConfigMgr10\AdminUI\Connection -Name Server).Server; New-PSDrive -Name $SiteCode -PSProvider CMSite -Root $ProviderMachineName | Out-Null }
+          Set-Location ("{0}:\\" -f $SiteCode)
+
+          $existing = Get-CMSiteSystemServer -Name $SiteSystemName -ErrorAction SilentlyContinue
+          if ($existing) { Write-Log "Site system server already exists: $SiteSystemName"; "SUCCESS" | Out-File -FilePath $status -Force -Encoding utf8; exit 0 }
+
+          New-CMSiteSystemServer -SiteCode $SiteCode -SiteSystemServerName $SiteSystemName -ErrorAction Stop | Out-Null
+          Write-Log "Site system server created"
+          "SUCCESS" | Out-File -FilePath $status -Force -Encoding utf8
+          exit 0
+      } catch { $msg = "ERROR: $($_.Exception.Message)"; Write-Log $msg; try { $msg | Out-File -FilePath $status -Force -Encoding utf8 } catch {}; exit 1 }
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+- name: Schedule site system create task
+  ansible.windows.win_shell: |
+    schtasks.exe /Create /TN 'SCCM-Passive-CreateSiteSystem' /TR 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\sccm_create_sitesystem.ps1 -SiteSystemName "{{ ludus_sccm_contentlib_hostname }}.{{ ludus_domain_fqdn }}" -SiteCode "{{ ludus_sccm_sitecode }}"' /SC ONCE /ST 00:00 /RL HIGHEST /RU '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}' /RP '{{ defaults.ad_domain_admin_password }}' /F
+  changed_when: true
+
+- name: Start site system create task
+  ansible.windows.win_shell: |
+    schtasks /Run /TN "SCCM-Passive-CreateSiteSystem"
+  register: ss_job_start
+  changed_when: true
+  failed_when: false
+
+- name: Wait for site system log to appear
+  ansible.windows.win_wait_for:
+    path: C:\sccm_create_sitesystem.log
+    state: present
+    timeout: 120
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+- name: Monitor site system create
+  ansible.windows.win_shell: |
+    $p = 'C:\sccm_create_sitesystem.status'
+    if (Test-Path $p) {
+      try { $s = Get-Content $p -Raw -ErrorAction Stop } catch { $s = '' }
+      if ($s -match '^SUCCESS') { exit 0 }
+      if ($s -match '^ERROR') {
+        Write-Output "\n=== Last 50 lines of sccm_create_sitesystem.log ==="
+        try { Get-Content 'C:\sccm_create_sitesystem.log' -Tail 50 -ErrorAction Stop | ForEach-Object { Write-Output $_ } } catch {}
+        exit 1
+      }
+    }
+    exit 2
+  register: ss_monitor
+  until: ss_monitor.rc == 0 or ss_monitor.rc == 1
+  retries: 60
+  delay: 10
+  failed_when: ss_monitor.rc == 1
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+# Step 3: Add Passive Site via scheduled task
+- name: Clear old add passive site logs and status
+  ansible.windows.win_shell: |
+    Remove-Item "C:\sccm_add_passive_site.log" -Force -ErrorAction SilentlyContinue
+    Remove-Item "C:\sccm_add_passive_site.status" -Force -ErrorAction SilentlyContinue
+  failed_when: false
+  changed_when: false
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+- name: Create add passive site script
+  ansible.windows.win_copy:
+    dest: C:\sccm_add_passive_site.ps1
+    force: yes
+    content: |
+      param(
+          [Parameter(Mandatory = $true)][string]$SiteSystemName,
+          [Parameter(Mandatory = $true)][string]$SiteCode
+      )
+
+      $log = 'C:\sccm_add_passive_site.log'
+      $status = 'C:\sccm_add_passive_site.status'
+      function Write-Log { param([string]$Message); $ts = Get-Date -Format s; try { "$ts $Message" | Out-File -FilePath $log -Append -Encoding utf8 } catch {} }
+      try { Remove-Item $log -Force -ErrorAction SilentlyContinue } catch {}
+      try { Remove-Item $status -Force -ErrorAction SilentlyContinue } catch {}
+
+      try {
+          Write-Log "Adding passive site on [$SiteSystemName] for site [$SiteCode]"
+          $cmModule = "C:\\Program Files (x86)\\Microsoft Configuration Manager\\AdminConsole\\bin\\ConfigurationManager.psd1"
+          if (-not (Test-Path $cmModule)) { throw "ConfigurationManager.psd1 not found at $cmModule" }
+          Import-Module $cmModule -ErrorAction Stop
+          if ((Get-PSDrive -Name $SiteCode -PSProvider CMSite -ErrorAction SilentlyContinue) -eq $null) { $ProviderMachineName = (Get-ItemProperty HKLM:\SOFTWARE\Wow6432Node\Microsoft\ConfigMgr10\AdminUI\Connection -Name Server).Server; New-PSDrive -Name $SiteCode -PSProvider CMSite -Root $ProviderMachineName | Out-Null }
+          Set-Location ("{0}:\\" -f $SiteCode)
+
+          $installPath = "C:\Program Files\Microsoft Configuration Manager"
+
+          # Ensure site system exists before adding
+          $existing = Get-CMSiteSystemServer -Name $SiteSystemName -ErrorAction SilentlyContinue
+          if (-not $existing) { throw "Site system server $SiteSystemName not found; create it before adding passive site." }
+
+      # Idempotency: Check if passive site role already exists on this server
+      try {
+        $ns = "root\\SMS\\site_$SiteCode"
+        $shortName = ($SiteSystemName -split '\\.')[0]
+        $roles = Get-WmiObject -Namespace $ns -Class SMS_SCI_SysResUse -ErrorAction SilentlyContinue
+        if ($roles) {
+          $existingPassive = $roles | Where-Object {
+            ($_.RoleName -match '(?i)passive') -and (
+              ($_.NALPath -match [regex]::Escape($SiteSystemName)) -or
+              ($shortName -and ($_.NALPath -match [regex]::Escape($shortName)))
+            )
+          }
+          if ($existingPassive) {
+            Write-Log "Passive site already present on $SiteSystemName - skipping add"
+            "SUCCESS" | Out-File -FilePath $status -Force -Encoding utf8
+            exit 0
+          }
+        }
+      } catch {
+        # Non-fatal: if WMI check fails, proceed to try add
+        Write-Log "Warning: Could not verify existing passive site via WMI: $($_.Exception.Message)"
+      }
+
+      try {
+        Add-CMPassiveSite -SiteCode $SiteCode -SiteSystemServerName $SiteSystemName -InstallDirectory $installPath -SourceFilePathOption CopySourceFileFromActiveSite -ErrorAction Stop | Out-Null
+      } catch {
+        $em = $_.Exception.Message
+        if ($em -match '(?i)already.*(installed|exists)' -or $em -match '(?i)always on role installed') {
+          Write-Log "Passive site appears to be already configured; treating as success"
+          "SUCCESS" | Out-File -FilePath $status -Force -Encoding utf8
+          exit 0
+        }
+        throw
+      }
+          Write-Log "Passive site add initiated"
+          "SUCCESS" | Out-File -FilePath $status -Force -Encoding utf8
+          exit 0
+      } catch { $msg = "ERROR: $($_.Exception.Message)"; Write-Log $msg; try { $msg | Out-File -FilePath $status -Force -Encoding utf8 } catch {}; exit 1 }
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+- name: Schedule add passive site task
+  ansible.windows.win_shell: |
+    schtasks.exe /Create /TN 'SCCM-Passive-AddPassiveSite' /TR 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\sccm_add_passive_site.ps1 -SiteSystemName "{{ ludus_sccm_passive_hostname }}.{{ ludus_domain_fqdn }}" -SiteCode "{{ ludus_sccm_sitecode }}"' /SC ONCE /ST 00:00 /RL HIGHEST /RU '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}' /RP '{{ defaults.ad_domain_admin_password }}' /F
+  changed_when: true
+
+- name: Start add passive site task
+  ansible.windows.win_shell: |
+    schtasks /Run /TN "SCCM-Passive-AddPassiveSite"
+  register: aps_job_start
+  changed_when: true
+  failed_when: false
+
+- name: Wait for add passive site log to appear
+  ansible.windows.win_wait_for:
+    path: C:\sccm_add_passive_site.log
+    state: present
+    timeout: 120
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+- name: Monitor add passive site
+  ansible.windows.win_shell: |
+    $p = 'C:\sccm_add_passive_site.status'
+    if (Test-Path $p) {
+      try { $s = Get-Content $p -Raw -ErrorAction Stop } catch { $s = '' }
+      if ($s -match '^SUCCESS') { exit 0 }
+      if ($s -match '^ERROR') {
+        Write-Output "\n=== Last 50 lines of sccm_add_passive_site.log ==="
+        try { Get-Content 'C:\sccm_add_passive_site.log' -Tail 50 -ErrorAction Stop | ForEach-Object { Write-Output $_ } } catch {}
+        exit 1
+      }
+    }
+    exit 2
+  register: aps_monitor
+  until: aps_monitor.rc == 0 or aps_monitor.rc == 1
+  retries: 60
+  delay: 10
+  failed_when: aps_monitor.rc == 1
   vars:
     ansible_become: true
     ansible_become_method: runas

@@ -1,3 +1,18 @@
+# Troubleshooting
+## Range Deploy Errors
+"Unhandled exception while executing module: Unable to find a default server with Active Directory Web Services running."
+Power the range off/on and run deploy again
+
+"Failed to install Windows Feature: The request to add or remove features on the specified server failed.\r\nInstallation of one or more roles, role services, or features failed.\nThe service cannot be started, either because it is disabled or because it has no enabled devices associated with it."
+Require windows_base before this role
+
+"Unhandled exception while executing module: Cannot find path 'HKLM:\\SOFTWARE\\Wow6432Node\\Microsoft\\ConfigMgr10\\AdminUI\\Connection' because it does not exist."
+Redeploy
+
+"Unhandled exception while executing module:  Computer \"PS1-LIB\" is not responding. The target computer is either turned off or Remote Scheduled Tasks Management Firewall rules are disabled.\r\nParameter name: computer"
+Require windows_base before this role
+
+
 # What's New
 ### Version 1.0.2
 - Updated SQL download link to SQL Server 2022 Eval due to breaks in [Takeover 1](https://github.com/subat0mik/Misconfiguration-Manager/blob/main/attack-techniques/TAKEOVER/TAKEOVER-1/takeover-1_description.md) authentication

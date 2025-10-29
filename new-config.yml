@@ -92,7 +92,10 @@ ludus:
         depends_on:
           - vm_name: "{{ range_id }}-cas-pss"
             role: synzack.ludus_sccm.windows_base
-      - synzack.ludus_sccm.install_site_database
+      - name: synzack.ludus_sccm.install_site_database
+        depends_on:
+          - vm_name: "{{ range_id }}-cas-db"
+            role: synzack.ludus_sccm.windows_base
     role_vars:
       ludus_sccm_site_server_hostname: 'cas-pss'
       ludus_sccm_sql_server_hostname: 'cas-db'    
@@ -157,6 +160,8 @@ ludus:
       - name: synzack.ludus_sccm.install_primary_site
         # Wait for SQL and SCP to be online before installing CAS
         depends_on:
+          - vm_name: "{{ range_id }}-cas-pss"
+            role: synzack.ludus_sccm.prep_siteserver
           - vm_name: "{{ range_id }}-cas-db"
             role: synzack.ludus_sccm.install_site_database
           - vm_name: "{{ range_id }}-cas-scp"
@@ -219,11 +224,18 @@ ludus:
         depends_on:
           - vm_name: "{{ range_id }}-ps1-pss"
             role: synzack.ludus_sccm.windows_base
-      - synzack.ludus_sccm.install_site_database
+      - name: synzack.ludus_sccm.install_site_database
+        # Wait for passive site server to be ready before installing SQL and adding passive site server account as SQL sysadmin
+        depends_on:
+          - vm_name: "{{ range_id }}-ps1-db"
+            role: synzack.ludus_sccm.windows_base
+          - vm_name: "{{ range_id }}-ps1-psv"
+            role: synzack.ludus_sccm.windows_base
     role_vars:
       ludus_sccm_site_server_hostname: 'ps1-pss'
       ludus_sccm_sql_server_hostname: 'ps1-db'
-      ludus_sccm_sql_additional_sysadmin_accounts: 'MAYYHEM\domainadmin'
+      # Add passive site server account as SQL sysadmin
+      ludus_sccm_sql_additional_sysadmin_accounts: 'MAYYHEM\domainadmin MAYYHEM\ps1-psv$'
 
   # PS1-LIB: Content Library Server
   - vm_name: "{{ range_id }}-ps1-lib"
@@ -289,6 +301,8 @@ ludus:
       - name: synzack.ludus_sccm.add_pss_to_admins
         # Wait for PS1-PSS to be online before adding to local admins
         depends_on:
+          - vm_name: "{{ range_id }}-ps1-psv"
+            role: synzack.ludus_sccm.windows_base
           - vm_name: "{{ range_id }}-ps1-pss"
             role: synzack.ludus_sccm.windows_base
     role_vars:
@@ -359,8 +373,14 @@ ludus:
         depends_on:
           - vm_name: "{{ range_id }}-ps1-pss"
             role: synzack.ludus_sccm.windows_base
+      - name: synzack.ludus_sccm.add_accounts_to_admins
+        # Add passive site server to local admins
+        depends_on:
+          - vm_name: "{{ range_id }}-ps1-psv"
+            role: synzack.ludus_sccm.windows_base
     role_vars:
       ludus_sccm_site_server_hostname: "ps1-pss" 
+      ludus_sccm_add_accounts_to_admins: "ps1-psv$"
 
   # PS1-SMS: SMS Provider
   - vm_name: "{{ range_id }}-ps1-sms"
@@ -422,52 +442,96 @@ ludus:
       - name: synzack.ludus_sccm.install_primary_site
         # Wait for the CAS and site systems to be online before installing site
         depends_on:
+          # Wait for Windows base for all domain-joined site systems for post-install OU update
+          - vm_name: "{{ range_id }}-cas-pss"
+            role: synzack.ludus_sccm.windows_base
+          - vm_name: "{{ range_id }}-cas-db"
+            role: synzack.ludus_sccm.windows_base
+          - vm_name: "{{ range_id }}-ps1-psv"
+            role: synzack.ludus_sccm.windows_base
+          - vm_name: "{{ range_id }}-ps1-pss"
+            role: synzack.ludus_sccm.windows_base
           - vm_name: "{{ range_id }}-ps1-db"
-            role: synzack.ludus_sccm.install_site_database
+            role: synzack.ludus_sccm.windows_base
+          - vm_name: "{{ range_id }}-ps1-sms"
+            role: synzack.ludus_sccm.windows_base
+          - vm_name: "{{ range_id }}-ps1-dp"
+            role: synzack.ludus_sccm.windows_base
+          - vm_name: "{{ range_id }}-ps1-mp"
+            role: synzack.ludus_sccm.windows_base
+          - vm_name: "{{ range_id }}-ps1-dev"
+            role: synzack.ludus_sccm.windows_base
+          - vm_name: "{{ range_id }}-ps1-sec"
+            role: synzack.ludus_sccm.windows_base
+          - vm_name: "{{ range_id }}-ps1-lib"
+            role: synzack.ludus_sccm.windows_base
+          - vm_name: "{{ range_id }}-ps2-pss"
+            role: synzack.ludus_sccm.windows_base
+          # Wait for site server to be in local admins on all site systems
           - vm_name: "{{ range_id }}-ps1-db"
             role: synzack.ludus_sccm.add_pss_to_admins
           - vm_name: "{{ range_id }}-ps1-sms"
             role: synzack.ludus_sccm.add_pss_to_admins
           - vm_name: "{{ range_id }}-ps1-dp"
-            role: synzack.ludus_sccm.prep_dp
-          - vm_name: "{{ range_id }}-ps1-dp"
             role: synzack.ludus_sccm.add_pss_to_admins
-          - vm_name: "{{ range_id }}-ps1-mp"
-            role: synzack.ludus_sccm.prep_mp
           - vm_name: "{{ range_id }}-ps1-mp"
             role: synzack.ludus_sccm.add_pss_to_admins
           - vm_name: "{{ range_id }}-ps1-dev"
             role: synzack.ludus_sccm.add_pss_to_admins
           - vm_name: "{{ range_id }}-ps1-sec"
             role: synzack.ludus_sccm.add_pss_to_admins
+          - vm_name: "{{ range_id }}-ps1-lib"
+            role: synzack.ludus_sccm.add_pss_to_admins
+          # Wait for site system prep to be done before installing site
+          - vm_name: "{{ range_id }}-ps1-dp"
+            role: synzack.ludus_sccm.prep_dp
+          - vm_name: "{{ range_id }}-ps1-mp"
+            role: synzack.ludus_sccm.prep_mp
+          - vm_name: "{{ range_id }}-ps1-pss"
+            role: synzack.ludus_sccm.prep_siteserver
+          - vm_name: "{{ range_id }}-ps1-db"
+            role: synzack.ludus_sccm.install_site_database
       - name: synzack.ludus_sccm.install_sms
         # Wait for SMS prep and site installation before installing remote SMS provider
         depends_on:
           - vm_name: "{{ range_id }}-ps1-sms"
+            role: synzack.ludus_sccm.windows_base
+          - vm_name: "{{ range_id }}-ps1-sms"
             role: synzack.ludus_sccm.prep_sms
           - vm_name: "{{ range_id }}-ps1-sms"
             role: synzack.ludus_sccm.add_pss_to_admins
+      - name: synzack.ludus_sccm.add_accounts_to_admins
+        depends_on:
+          - vm_name: "{{ range_id }}-cas-pss"
+            role: synzack.ludus_sccm.windows_base
+          - vm_name: "{{ range_id }}-ps1-psv"
+            role: synzack.ludus_sccm.windows_base
+        # Add CAS and passive site servers to local admins
       - name: synzack.ludus_sccm.install_passive_site_server
         # Wait for content lib share, site database, and server prep to be done before installing passive site server
         depends_on:
+          - vm_name: "{{ range_id }}-ps1-lib"
+            role: synzack.ludus_sccm.windows_base
           - vm_name: "{{ range_id }}-ps1-lib"
             role: synzack.ludus_sccm.create_contentlib_share
           - vm_name: "{{ range_id }}-ps1-psv"
             role: synzack.ludus_sccm.install_site_database
           - vm_name: "{{ range_id }}-ps1-psv"
-            role: synzack.ludus_sccm.prep_siteserver        
+            role: synzack.ludus_sccm.prep_siteserver
           - vm_name: "{{ range_id }}-ps1-psv"
             role: synzack.ludus_sccm.add_pss_to_admins
       - name: synzack.ludus_sccm.install_secondary_site
         # Wait for secondary site server prep and site installation to be done before installing secondary site
         depends_on:
           - vm_name: "{{ range_id }}-ps1-sec"
+            role: synzack.ludus_sccm.prep_siteserver
+          - vm_name: "{{ range_id }}-ps1-sec"
             role: synzack.ludus_sccm.add_pss_to_admins
     role_vars:
       # This is a child site of CAS
       ludus_sccm_parent_sitecode: 'CAS'
       ludus_sccm_parent_site_server_hostname: 'cas-pss'
-      ludus_sccm_add_accounts_to_admins: 'cas-pss$'
+      ludus_sccm_add_accounts_to_admins: 'cas-pss$,ps1-psv$'
       ludus_sccm_win_sccm_config_default_template: ChildSiteConfigMgrSetup.ini.j2
       # Primary site specific settings (overrides defaults)
       ludus_sccm_sitecode: PS1
@@ -547,7 +611,7 @@ ludus:
       role: member
     roles:
       - synzack.ludus_sccm.windows_base
-      - synzack.ludus_sccm.ludus_sccm_prep_siteserver
+      - synzack.ludus_sccm.prep_siteserver
       - name: synzack.ludus_sccm.add_pss_to_admins
         # Wait for PS1-PSS to be online before adding to local admins
         depends_on:
@@ -556,6 +620,8 @@ ludus:
     role_vars:
       # This is a secondary child site of PS1
       ludus_sccm_site_server_hostname: 'ps1-pss'
+      ludus_sccm_is_primary_or_cas: false
+
 
 ############################
 ## Primary Site Two (PS2) ##
@@ -590,6 +656,8 @@ ludus:
       - name: synzack.ludus_sccm.install_primary_site
         # Wait for the CAS and site database to be online before installing site
         depends_on:
+          - vm_name: "{{ range_id }}-ps2-pss"
+            role: synzack.ludus_sccm.prep_siteserver
           - vm_name: "{{ range_id }}-cas-pss"
             role: synzack.ludus_sccm.install_primary_site
     role_vars:
