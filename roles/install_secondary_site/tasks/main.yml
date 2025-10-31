@@ -44,24 +44,39 @@
           }
           Set-Location ("{0}:\\" -f $ParentSiteCode)
 
-          # Idempotency: check if secondary already exists
-          $ns = "root\\SMS\\site_$ParentSiteCode"
-          $secondaryExists = $false
-          try {
-              $secByCode = Get-WmiObject -Namespace $ns -Class SMS_Site -Filter ("SiteCode='{0}'" -f $SiteCode) -ErrorAction Stop
-              if ($secByCode) { $secondaryExists = $true }
-          } catch { }
+      # Idempotency: prefer SMS_SiteAndSubsites, fallback to SMS_Site
+      $ns = "root\\SMS\\site_$ParentSiteCode"
+      $secondaryExists = $false
+      $short = ($ServerName -split '\\.')[0]
+      try {
+        $entries = Get-WmiObject -Namespace $ns -Class SMS_SiteAndSubsites -ErrorAction Stop
+      } catch { $entries = $null }
+
+      if ($entries) {
+        # Check by SiteCode first
+        $byCode = $entries | Where-Object { $_.SiteCode -ieq $SiteCode } | Select-Object -First 1
+        if ($byCode) {
+          $secondaryExists = $true
+        } else {
+          # Then check by ServerName; exclude the parent site itself
+          $byServer = $entries | Where-Object { ($_.ServerName -ieq $ServerName -or $_.ServerName -ieq $short) -and ($_.SiteCode -ine $ParentSiteCode) } | Select-Object -First 1
+          if ($byServer) { $secondaryExists = $true }
+        }
+      } else {
+        # Fallback compatibility path using SMS_Site
+        try {
+          $secByCode = Get-WmiObject -Namespace $ns -Class SMS_Site -Filter ("SiteCode='{0}'" -f $SiteCode) -ErrorAction Stop
+          if ($secByCode) { $secondaryExists = $true }
           if (-not $secondaryExists) {
-              try {
-                  $short = ($ServerName -split '\\.')[0]
-                  $sites = Get-WmiObject -Namespace $ns -Class SMS_Site -ErrorAction Stop
-                  foreach ($s in ($sites | Where-Object { $_ })) {
-                      if (($s.ServerName -ieq $ServerName) -or ($s.ServerName -ieq $short)) {
-                          if ($s.Type -eq 2) { $secondaryExists = $true; break }
-                      }
-                  }
-              } catch { }
+            $sites = Get-WmiObject -Namespace $ns -Class SMS_Site -ErrorAction Stop
+            foreach ($s in ($sites | Where-Object { $_ })) {
+              if (($s.ServerName -ieq $ServerName) -or ($s.ServerName -ieq $short)) {
+                if ($s.Type -eq 2) { $secondaryExists = $true; break }
+              }
+            }
           }
+        } catch { }
+      }
           if ($secondaryExists) {
               Write-Log "Secondary site already exists for SiteCode=[$SiteCode] or Server=[$ServerName]; skipping create"
               "SUCCESS" | Out-File -FilePath $status -Force -Encoding utf8

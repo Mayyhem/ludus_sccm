@@ -3,7 +3,14 @@ ludus_install_directory: /opt/ludus
 ludus_sccm_host_path: "C:\\ludus\\sccm"
 ludus_sccm_win_sccm_config_default_prereq_path: C:\SCCM
 ludus_sccm_system_management_template: SystemManagement.ps1.j2
+# Default to standalone primary site with all roles on one server
 ludus_sccm_win_sccm_config_default_template: StandaloneSiteConfigMgrSetup.ini.j2
+ludus_sccm_sitecode: "PS1"
+ludus_sccm_sitename: "Primary Site One"
+ludus_sccm_site_server_hostname: "{{ inventory_hostname }}"
+ludus_sccm_sql_server_hostname: "{{ inventory_hostname }}"
+ludus_sccm_mgmt_server_hostname: "{{ inventory_hostname }}"
+ludus_sccm_distro_server_hostname: "{{ inventory_hostname }}"
 # https://www.microsoft.com/en-us/evalcenter/download-microsoft-endpoint-configuration-manager
 configmgr_url: https://download.microsoft.com/download/2/e/5/2e5738c0-1489-4420-ab4b-e5313b9fcec4/MCM_Configmgr_2403.exe
 adksetup_url: https://download.microsoft.com/download/e/8/b/e8bec6c1-8153-408d-96b1-ee2985a600ad/adk/adksetup.exe

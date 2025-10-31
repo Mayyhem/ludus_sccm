@@ -39,6 +39,14 @@
           if (-not (Test-Path $cmModule)) { throw "ConfigurationManager.psd1 not found at $cmModule" }
           Import-Module $cmModule -ErrorAction Stop
 
+      # Validate UNC path exists and is writable BEFORE switching to CMSite provider
+      if (-not (Test-Path -Path $MoveContentLibTo)) { throw "The specified location '$MoveContentLibTo' does not exist or is inaccessible." }
+      try {
+        $tf = Join-Path -Path $MoveContentLibTo -ChildPath ("perm_test_{0}.txt" -f ([Guid]::NewGuid()))
+        "test" | Out-File -FilePath $tf -Encoding utf8
+        Remove-Item $tf -Force -ErrorAction SilentlyContinue
+      } catch { throw "Write test to '$MoveContentLibTo' failed. Verify permissions." }
+
           if ((Get-PSDrive -Name $SiteCode -PSProvider CMSite -ErrorAction SilentlyContinue) -eq $null) {
               $ProviderMachineName = (Get-ItemProperty HKLM:\SOFTWARE\Wow6432Node\Microsoft\ConfigMgr10\AdminUI\Connection -Name Server).Server
               New-PSDrive -Name $SiteCode -PSProvider CMSite -Root $ProviderMachineName | Out-Null
@@ -52,10 +60,6 @@
               "SUCCESS" | Out-File -FilePath $status -Force -Encoding utf8
               exit 0
           }
-
-          # Validate UNC path exists and is writable
-          if (-not (Test-Path -Path $MoveContentLibTo)) { throw "The specified location '$MoveContentLibTo' does not exist or is inaccessible." }
-          try { $tf = Join-Path $MoveContentLibTo ("perm_test_{0}.txt" -f ([Guid]::NewGuid())); "test" | Out-File -FilePath $tf -Encoding utf8; Remove-Item $tf -Force -ErrorAction SilentlyContinue } catch { throw "Write test to '$MoveContentLibTo' failed. Verify permissions." }
 
           Write-Log "Initiating Content Library move"
           Move-CMContentLibrary -NewLocation $MoveContentLibTo -SiteCode $SiteCode -ErrorAction Stop
@@ -188,7 +192,7 @@
 
 - name: Schedule site system create task
   ansible.windows.win_shell: |
-    schtasks.exe /Create /TN 'SCCM-Passive-CreateSiteSystem' /TR 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\sccm_create_sitesystem.ps1 -SiteSystemName "{{ ludus_sccm_contentlib_hostname }}.{{ ludus_domain_fqdn }}" -SiteCode "{{ ludus_sccm_sitecode }}"' /SC ONCE /ST 00:00 /RL HIGHEST /RU '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}' /RP '{{ defaults.ad_domain_admin_password }}' /F
+    schtasks.exe /Create /TN 'SCCM-Passive-CreateSiteSystem' /TR 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\sccm_create_sitesystem.ps1 -SiteSystemName "{{ ludus_sccm_passive_hostname }}.{{ ludus_domain_fqdn }}" -SiteCode "{{ ludus_sccm_sitecode }}"' /SC ONCE /ST 00:00 /RL HIGHEST /RU '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}' /RP '{{ defaults.ad_domain_admin_password }}' /F
   changed_when: true
 
 - name: Start site system create task

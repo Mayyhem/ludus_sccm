@@ -102,7 +102,6 @@
         - name: Reboot site server
           ansible.windows.win_reboot:
             reboot_timeout: 600
-            #post_reboot_delay: 30
 
         - name: Reboot site database server
           ansible.windows.win_shell: |
@@ -114,6 +113,14 @@
             ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
             ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
             ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+        - name: Post reboot delay for site database server
+          ansible.windows.win_wait_for:
+            host: "{{ ludus_sccm_sql_server_hostname }}.{{ ludus_domain_fqdn }}"
+            port: 5985
+            # Time in seconds to wait for
+            timeout: 20
+          when: ludus_sccm_sql_server_hostname != inventory_hostname
 
         - name: Update attempt counter for final retry
           set_fact:
