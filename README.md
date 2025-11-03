@@ -12,6 +12,8 @@ Redeploy
 "Unhandled exception while executing module:  Computer \"PS1-LIB\" is not responding. The target computer is either turned off or Remote Scheduled Tasks Management Firewall rules are disabled.\r\nParameter name: computer"
 Require windows_base before this role
 
+timeout while waiting for file C:\\sccm_add_passive_site.log to be present
+Runu again
 
 # What's New
 ### Version 1.0.2

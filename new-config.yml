@@ -671,6 +671,7 @@ ludus:
       ludus_sccm_site_server_hostname: 'ps2-pss'
       ludus_sccm_sql_server_hostname: 'ps2-pss'
       ludus_sccm_configure_naa: false
+      ludus_sccm_sql_additional_sysadmin_accounts: null
       # Disable client push to prevent conflicts with PS1 site
       ludus_sccm_configure_client_push: false
       ludus_sccm_enable_pxe: false

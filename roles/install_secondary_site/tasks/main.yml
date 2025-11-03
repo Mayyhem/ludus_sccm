@@ -45,12 +45,15 @@
           Set-Location ("{0}:\\" -f $ParentSiteCode)
 
       # Idempotency: prefer SMS_SiteAndSubsites, fallback to SMS_Site
-      $ns = "root\\SMS\\site_$ParentSiteCode"
+      $ns = "root\SMS\site_$ParentSiteCode"
       $secondaryExists = $false
       $short = ($ServerName -split '\\.')[0]
       try {
         $entries = Get-WmiObject -Namespace $ns -Class SMS_SiteAndSubsites -ErrorAction Stop
-      } catch { $entries = $null }
+      } catch {
+        Write-Log "Failed to query SMS_SiteAndSubsites: $($_.Exception.Message)"
+        $entries = $null 
+      }
 
       if ($entries) {
         # Check by SiteCode first
