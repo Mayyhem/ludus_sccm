@@ -145,11 +145,11 @@
           if (-not $hasGrowth -and $previousSizes.Count -gt 0) {
               $stallCount++
               $stallSeconds = $stallCount * 60 # Each check is 1 minute apart
-              Write-Output "No log growth - stalled for $stallSeconds seconds ($stallCount/5 checks)"
+              Write-Output "No log growth - stalled for $stallSeconds seconds ($stallCount/10 checks)"
               
-              # If stalled for 5 checks (5 minutes), consider it a stall
-              if ($stallCount -ge 5) {
-                  Write-Output "STALL DETECTED after 5 minutes"
+              # If stalled for 10 checks (10 minutes), consider it a stall
+              if ($stallCount -ge 10) {
+                  Write-Output "STALL DETECTED after 10 minutes"
                   
                   # Check for duplicate installation error
                   if (Test-Path $prereqLog) {

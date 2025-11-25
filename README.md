@@ -13,7 +13,10 @@ Redeploy
 Require windows_base before this role
 
 timeout while waiting for file C:\\sccm_add_passive_site.log to be present
-Runu again
+Run again
+
+Failed to connect to SQL service
+Manually log in as domainadmin, uninstall MSSQL Server on server, then reboot, then redeploy
 
 # What's New
 ### Version 1.0.2
