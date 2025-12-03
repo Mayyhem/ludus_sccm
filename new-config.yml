@@ -53,6 +53,7 @@ ludus:
         - procmon
         - systeminformer-nightlybuilds
         - wireshark
+      chocolatey_ignore_checksums: true
       sysprep: true
     domain:
       fqdn: mayyhem.com
@@ -86,6 +87,7 @@ ludus:
         - sql-server-management-studio
         - systeminformer-nightlybuilds
         - wireshark
+      chocolatey_ignore_checksums: true
       sysprep: true
     domain:
       fqdn: mayyhem.com
@@ -130,6 +132,7 @@ ludus:
         - procmon
         - systeminformer-nightlybuilds
         - wireshark
+      chocolatey_ignore_checksums: true
       sysprep: true
     domain:
       fqdn: mayyhem.com
@@ -168,6 +171,7 @@ ludus:
         - sql-server-management-studio
         - systeminformer-nightlybuilds
         - wireshark
+      chocolatey_ignore_checksums: true
       sysprep: true
     domain:
       fqdn: mayyhem.com
@@ -238,6 +242,7 @@ ludus:
         - sql-server-management-studio
         - systeminformer-nightlybuilds
         - wireshark
+      chocolatey_ignore_checksums: true
       sysprep: true
     domain:
       fqdn: mayyhem.com
@@ -285,6 +290,7 @@ ludus:
         - procmon
         - systeminformer-nightlybuilds
         - wireshark
+      chocolatey_ignore_checksums: true
       sysprep: true
     domain:
       fqdn: mayyhem.com
@@ -334,6 +340,7 @@ ludus:
         - sql-server-management-studio
         - systeminformer-nightlybuilds
         - wireshark
+      chocolatey_ignore_checksums: true
       sysprep: true
     domain:
       fqdn: mayyhem.com
@@ -385,6 +392,7 @@ ludus:
         - procmon
         - systeminformer-nightlybuilds
         - wireshark
+      chocolatey_ignore_checksums: true
       sysprep: true
     domain:
       fqdn: mayyhem.com
@@ -433,6 +441,7 @@ ludus:
         - procmon
         - systeminformer-nightlybuilds
         - wireshark
+      chocolatey_ignore_checksums: true
       sysprep: true
     domain:
       fqdn: mayyhem.com
@@ -481,6 +490,7 @@ ludus:
         - sysinternals
         - systeminformer-nightlybuilds
         - wireshark
+      chocolatey_ignore_checksums: true
       sysprep: true
     domain:
       fqdn: mayyhem.com
@@ -528,6 +538,7 @@ ludus:
         - sql-server-management-studio
         - systeminformer-nightlybuilds
         - wireshark
+      chocolatey_ignore_checksums: true
       sysprep: true
     domain:
       fqdn: mayyhem.com
@@ -568,6 +579,8 @@ ludus:
           - vm_name: "{{ range_id }}-ps1-lib"
             role: synzack.ludus_sccm.windows_base
           - vm_name: "{{ range_id }}-ps2-pss"
+            role: synzack.ludus_sccm.windows_base
+          - vm_name: "{{ range_id }}-hi2-pss"
             role: synzack.ludus_sccm.windows_base
           # Wait for site server to be in local admins on all site systems
           - vm_name: "{{ range_id }}-ps1-db"
@@ -679,6 +692,7 @@ ludus:
         - vscode
         - windows-sdk-10-version-2004-windbg
         - wireshark
+      chocolatey_ignore_checksums: true
       sysprep: true
     domain:
       fqdn: mayyhem.com
@@ -717,6 +731,7 @@ ludus:
         - sql-server-management-studio
         - systeminformer-nightlybuilds
         - wireshark
+      chocolatey_ignore_checksums: true
       sysprep: true
     domain:
       fqdn: mayyhem.com
@@ -773,6 +788,7 @@ ludus:
         - sql-server-management-studio
         - systeminformer-nightlybuilds
         - wireshark
+      chocolatey_ignore_checksums: true
       sysprep: true
     domain:
       fqdn: mayyhem.com
@@ -793,7 +809,7 @@ ludus:
           - vm_name: "{{ range_id }}-ps2-pss"
             role: synzack.ludus_sccm.windows_base
       - name: synzack.ludus_sccm.install_primary_site
-         Wait for the CAS, PS1, and site database to be online before installing site
+        # Wait for the CAS, PS1, and site database to be online before installing site
         depends_on:
           - vm_name: "{{ range_id }}-ps2-pss"
             role: synzack.ludus_sccm.prep_siteserver
@@ -841,6 +857,7 @@ ludus:
         - sql-server-management-studio
         - systeminformer-nightlybuilds
         - wireshark
+      chocolatey_ignore_checksums: true
       sysprep: true
     domain:
       fqdn: mayyhem.com

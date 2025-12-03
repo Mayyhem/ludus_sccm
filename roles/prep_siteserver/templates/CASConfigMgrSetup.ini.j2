@@ -6,7 +6,7 @@ ProductID=EVAL
 SiteCode={{ ludus_sccm_sitecode }}
 SiteName={{ ludus_sccm_sitename }}
 SMSInstallDir=C:\Program Files\Microsoft Configuration Manager
-SDKServer={{ ludus_sccm_site_server_hostname }}.{{ ludus_domain_fqdn }}
+SDKServer={{ effective_site_server_hostname }}.{{ ludus_domain_fqdn }}
 RoleCommunicationProtocol=HTTPorHTTPS
 ClientsUsePKICertificate=0
 PrerequisiteComp=0
@@ -15,11 +15,11 @@ AdminConsole=1
 JoinCEIP=0
 
 [SQLConfigOptions]
-SQLServerName={{ ludus_sccm_sql_server_hostname }}.{{ ludus_domain_fqdn }}
+SQLServerName={{ effective_sql_server_hostname }}.{{ ludus_domain_fqdn }}
 DatabaseName=CM_{{ ludus_sccm_sitecode }}
 SQLSSBPort=4022
 
 [CloudConnectorOptions]
 CloudConnector=1
-CloudConnectorServer={{ ludus_sccm_scp_hostname }}.{{ ludus_domain_fqdn }}
+CloudConnectorServer={{ effective_scp_hostname }}.{{ ludus_domain_fqdn }}
 UseProxy=0

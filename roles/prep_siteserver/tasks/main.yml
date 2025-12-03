@@ -1,4 +1,7 @@
 ---
+# Ensure effective hostnames are set for all templates
+- import_tasks: ../tasks/set_effective_hostnames.yml
+
 - name: Install Windows Features
   ansible.windows.win_feature:
     name:

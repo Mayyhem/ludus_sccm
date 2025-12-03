@@ -36,10 +36,179 @@
     msg: "SMS Provider already installed on {{ ludus_sccm_sms_provider_hostname }}.{{ ludus_domain_fqdn }}; skipping setup."
   when: sms_provider_exists | bool
 
-- name: Start SCCM setup
+- name: Create monitor script for SMS Provider installation
+  ansible.windows.win_copy:
+    dest: C:\sms_monitor.ps1
+    force: yes
+    content: |
+      try {
+        $setupLog = "C:\ConfigMgrSetup.log"
+        $tracker = "C:\sms_stall_tracker.txt"
+
+        # Check if setup process is running
+        $setupProcess = Get-Process -Name "setup","setupwpf" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*Configuration Manager*" }
+
+        # Check if installation is complete by looking for the SMS Provider in WMI
+        try {
+          $target = "{{ ludus_sccm_sms_provider_hostname }}.{{ ludus_domain_fqdn }}"
+          $targetShort = "{{ ludus_sccm_sms_provider_hostname }}"
+          $siteServer = "{{ ludus_sccm_site_server_hostname }}.{{ ludus_domain_fqdn }}"
+          $providers = Get-CimInstance -Namespace root\SMS -ClassName SMS_ProviderLocation -ComputerName $siteServer -ErrorAction Stop
+          $exists = $providers | Where-Object { $_.Machine -ieq $target -or $_.Machine -ieq $targetShort }
+          if ($exists) {
+            Write-Output "SMS Provider installation complete on $target"
+            $host.SetShouldExit(0)
+            exit 0
+          }
+        } catch {
+          # Provider not available yet
+        }
+
+        $setupLogExists = Test-Path $setupLog
+
+        if (-not $setupProcess) {
+          # Setup process not running - check if it ever started
+          if ($setupLogExists) {
+            Write-Output "Setup process has exited - installation may have failed"
+            Write-Output "`n=== Last 50 lines of ConfigMgrSetup.log ==="
+            try {
+              Get-Content $setupLog -Tail 50 -ErrorAction Stop | ForEach-Object { Write-Output $_ }
+            } catch {}
+            $host.SetShouldExit(1)
+            exit 1
+          } else {
+            Write-Output "Setup process not running - waiting for setup to start"
+            $host.SetShouldExit(2)
+            exit 2
+          }
+        }
+
+        Write-Output "Setup running (PID: $($setupProcess.Id)) - monitoring for stalls"
+
+        $currentSize = 0
+        if ($setupLogExists) {
+          try {
+            $file = Get-Item $setupLog -ErrorAction Stop
+            $currentSize = $file.Length
+          } catch {
+            $currentSize = 0
+          }
+        }
+
+        # Load previous state
+        $previousSize = 0
+        $stallCount = 0
+
+        if (Test-Path $tracker) {
+          try {
+            $data = Get-Content $tracker -ErrorAction Stop
+            if ($data -and $data.Count -ge 2) {
+              $previousSize = [long]$data[0]
+              $stallCount = [int]$data[1]
+            }
+          } catch {
+            # Ignore tracker read errors
+          }
+        }
+
+        # Check if log has grown
+        $hasGrowth = $false
+        if ($previousSize -ne 0 -and $currentSize -gt $previousSize) {
+          $hasGrowth = $true
+          Write-Output "ConfigMgrSetup.log grew by $($currentSize - $previousSize) bytes"
+        }
+
+        if (-not $hasGrowth -and $previousSize -ne 0) {
+          $stallCount++
+          $stallSeconds = $stallCount * 60
+          Write-Output "No log growth - stalled for $stallSeconds seconds ($stallCount/10 checks)"
+
+          # If stalled for 10 checks (10 minutes), consider it a stall
+          if ($stallCount -ge 10) {
+            Write-Output "STALL DETECTED after 10 minutes - terminating setup process"
+            Stop-Process -Id $setupProcess.Id -Force
+            Write-Output "`n=== Last 50 lines of ConfigMgrSetup.log ==="
+            if ($setupLogExists) {
+              try {
+                Get-Content $setupLog -Tail 50 -ErrorAction Stop | ForEach-Object { Write-Output $_ }
+              } catch {}
+            }
+            $host.SetShouldExit(1)
+            exit 1
+          }
+        } else {
+          $stallCount = 0
+        }
+
+        # Save current state
+        try {
+          "$currentSize`n$stallCount" | Out-File -FilePath $tracker -Force -ErrorAction Stop
+        } catch {
+          # Silently ignore tracker write failures
+        }
+
+        Write-Output "Setup in progress - continuing to monitor"
+        $host.SetShouldExit(2)
+        exit 2
+      } catch {
+        Write-Output "CRITICAL ERROR in monitor script: $_"
+        $host.SetShouldExit(2)
+        exit 2
+      }
+  when: not (sms_provider_exists | bool)
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+- name: Start SCCM SMS Provider setup in background
   ansible.windows.win_shell: |
-    & 'C:\Program Files\Microsoft Configuration Manager\bin\X64\setup.exe' --% /SDKINST {{ ludus_sccm_sms_provider_hostname }}.{{ ludus_domain_fqdn }}
-  register: setup_job
+    Start-Process -FilePath 'C:\Program Files\Microsoft Configuration Manager\bin\X64\setup.exe' -ArgumentList '/SDKINST','{{ ludus_sccm_sms_provider_hostname }}.{{ ludus_domain_fqdn }}' -NoNewWindow
+  when: not (sms_provider_exists | bool)
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+- name: Wait for setup to actually start
+  ansible.windows.win_shell: |
+    $process = Get-Process -Name "setup","setupwpf" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*Configuration Manager*" }
+    if ($process) {
+      Write-Output "Setup process started with PID: $($process.Id)"
+      exit 0
+    }
+    exit 1
+  register: setup_start_check
+  until: setup_start_check.rc == 0
+  retries: 10
+  delay: 5
+  failed_when: false
+  when: not (sms_provider_exists | bool)
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+- name: Check if setup started successfully
+  fail:
+    msg: "Setup process failed to start after 50 seconds"
+  when: 
+    - not (sms_provider_exists | bool)
+    - setup_start_check.rc != 0
+
+- name: Monitor SMS Provider setup process
+  ansible.windows.win_shell: C:\sms_monitor.ps1
+  register: monitor_result
+  until: monitor_result.rc == 0 or monitor_result.rc == 1
+  retries: 60
+  delay: 60
+  failed_when: monitor_result.rc == 1
   when: not (sms_provider_exists | bool)
   vars:
     ansible_become: true

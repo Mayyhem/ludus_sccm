@@ -1,7 +1,25 @@
 # Troubleshooting
 ## Range Deploy Errors
+TASK [Wait for VM to acquire an IP address] ************************************
+An exception occurred during task execution. To see the full traceback, use -vvv. The error was: json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+fatal: [localhost]: FAILED! => {"msg": "Unexpected failure during module execution: Expecting value: line 1 column 1 (char 0)", "stdout": ""}
+Run `ludus range deploy` again
+
+TASK [Check that we have a primary DC IP] **************************************
+fatal: [cthompson-ps1-sec]: FAILED! => {"changed": false, "msg": "The primary DC does not have an ansible_host value - it is likely unreachable. Reboot the primary DC (cthompson-dc) and try again."}
+Power the range off/on and run `ludus range deploy` again
+
+"[NuGet] Error downloading 'chocolatey-compatibility.extension.1.0.0' from 'https://community.chocolatey.org/api/v2/package/chocolatey-compatibility.extension/1.0.0'.", "[NuGet] Response status code does not indicate success: 429 (Too Many Requests)."
+Start the Nexus host and run `ludus range deploy` again
+
+"The task includes an option with an undefined variable" on "Show the sAMAccountName for" task
+Power the range off/on and run `ludus range deploy` again
+
 "Unhandled exception while executing module: Unable to find a default server with Active Directory Web Services running."
-Power the range off/on and run deploy again
+Power the range off/on and run `ludus range deploy` again
+
+internal error: failed to become user 'mayyhem.com\\domainadmin': Exception calling \"CreateProcessAsUser\" with \"9\" argument(s): \"Some or all identity references could not be translated.\
+Power the range off/on and run `ludus range deploy` again
 
 "Failed to install Windows Feature: The request to add or remove features on the specified server failed.\r\nInstallation of one or more roles, role services, or features failed.\nThe service cannot be started, either because it is disabled or because it has no enabled devices associated with it."
 Require windows_base before this role
@@ -17,6 +35,9 @@ Run again
 
 Failed to connect to SQL service
 Manually log in as domainadmin, uninstall MSSQL Server on server, then reboot, then redeploy
+
+# To do
+Upgrade version from 2303 to current or enable automatic upgrade
 
 # What's New
 ### Version 1.0.2

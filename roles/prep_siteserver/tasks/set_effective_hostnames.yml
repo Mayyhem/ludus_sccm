@@ -1,0 +1,36 @@
+- name: Set effective hostnames for all SCCM roles (localhost handling, otherwise connections may fail during setup)
+  ansible.windows.win_shell: |
+    $vars = @{
+      site_server = "{{ ludus_sccm_site_server_hostname }}"
+      child_site_server = "{{ ludus_sccm_child_site_server_hostname }}"
+      scp = "{{ ludus_sccm_scp_hostname }}"
+      distro_server = "{{ ludus_sccm_distro_server_hostname }}"
+      mgmt_server = "{{ ludus_sccm_mgmt_server_hostname }}"
+      parent_site_server = "{{ ludus_sccm_parent_site_server_hostname }}"
+      sql_server = "{{ ludus_sccm_sql_server_hostname }}"
+    }
+    $local = $env:COMPUTERNAME
+    $out = @{}
+    foreach ($k in $vars.Keys) {
+      if ($vars[$k] -ieq $local) { $out[$k] = '127.0.0.1' } else { $out[$k] = $vars[$k] }
+    }
+    $out.GetEnumerator() | ForEach-Object { Write-Output \"$($_.Key):$($_.Value)\" }
+  register: effective_hostnames_raw
+  changed_when: false
+
+- name: Set facts for effective hostnames
+  set_fact:
+    effective_site_server_hostname: >-
+      {{ (effective_hostnames_raw.stdout_lines | select('search', '^site_server:') | map('regex_replace', '^site_server:', '') | list | first | default(ludus_sccm_site_server_hostname | default(''))) | trim }}
+    effective_child_site_server_hostname: >-
+      {{ (effective_hostnames_raw.stdout_lines | select('search', '^child_site_server:') | map('regex_replace', '^child_site_server:', '') | list | first | default(ludus_sccm_child_site_server_hostname | default(''))) | trim }}
+    effective_scp_hostname: >-
+      {{ (effective_hostnames_raw.stdout_lines | select('search', '^scp:') | map('regex_replace', '^scp:', '') | list | first | default(ludus_sccm_scp_hostname | default(''))) | trim }}
+    effective_distro_server_hostname: >-
+      {{ (effective_hostnames_raw.stdout_lines | select('search', '^distro_server:') | map('regex_replace', '^distro_server:', '') | list | first | default(ludus_sccm_distro_server_hostname | default(''))) | trim }}
+    effective_mgmt_server_hostname: >-
+      {{ (effective_hostnames_raw.stdout_lines | select('search', '^mgmt_server:') | map('regex_replace', '^mgmt_server:', '') | list | first | default(ludus_sccm_mgmt_server_hostname | default(''))) | trim }}
+    effective_parent_site_server_hostname: >-
+      {{ (effective_hostnames_raw.stdout_lines | select('search', '^parent_site_server:') | map('regex_replace', '^parent_site_server:', '') | list | first | default(ludus_sccm_parent_site_server_hostname | default(''))) | trim }}
+    effective_sql_server_hostname: >-
+      {{ (effective_hostnames_raw.stdout_lines | select('search', '^sql_server:') | map('regex_replace', '^sql_server:', '') | list | first | default(ludus_sccm_sql_server_hostname | default(''))) | trim }}
