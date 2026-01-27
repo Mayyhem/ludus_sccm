@@ -36,7 +36,7 @@
 
 - name: Setup SQL Server - This will take a while
   ansible.windows.win_shell: |
-    {{ disk_image_out.mount_paths[0] }}setup.exe /Q /IAcceptSQLServerLicenseTerms /ACTION="install" /FEATURES=SQL /INSTANCENAME={{ ludus_sccm_sql_instance_name }} /SQLSYSADMINACCOUNTS={{ ludus_sccm_sql_sysadmin_accounts }} /SQLSVCACCOUNT='{{ ludus_domain_netbios_name }}\{{ ludus_sccm_sql_svc_account_username }}' /SQLSVCPASSWORD="{{ ludus_sccm_sql_svc_account_password }}" /SQLMINMEMORY="2048" /SQLMAXMEMORY="16384"
+    {{ disk_image_out.mount_paths[0] }}setup.exe /Q /IAcceptSQLServerLicenseTerms /ACTION="install" /FEATURES=SQL /TCPENABLED=1 /INSTANCENAME={{ ludus_sccm_sql_instance_name }} /SQLSYSADMINACCOUNTS={{ ludus_sccm_sql_sysadmin_accounts }} /SQLSVCACCOUNT='{{ ludus_domain_netbios_name }}\{{ ludus_sccm_sql_svc_account_username }}' /SQLSVCPASSWORD="{{ ludus_sccm_sql_svc_account_password }}" /SQLMINMEMORY="2048" /SQLMAXMEMORY="16384"
   vars:
     ansible_become: true
     ansible_become_method: runas

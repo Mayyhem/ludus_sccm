@@ -198,6 +198,8 @@ ludus:
             role: synzack.ludus_sccm.add_pss_to_admins
           - vm_name: "{{ range_id }}-ps1-pss"
             role: synzack.ludus_sccm.install_primary_site
+          - vm_name: "{{ range_id }}-ps1-pss"
+            role: synzack.ludus_sccm.add_accounts_to_admins
     role_vars:
       ludus_sccm_sitecode: CAS
       ludus_sccm_sitename: Central Administration Site
@@ -886,7 +888,7 @@ ludus:
             role: synzack.ludus_sccm.install_site_database
     role_vars:
       ludus_sccm_sql_instance_name: 'HI2SITEDB'
-      ludus_sccm_win_sccm_config_default_template: StandalonSiteConfigMgrSetup.ini.j2
+      ludus_sccm_win_sccm_config_default_template: StandaloneSiteConfigMgrSetup.ini.j2
       # Primary site specific settings (overrides defaults)
       ludus_sccm_sitecode: HI2
       ludus_sccm_sitename: Hierarchy Two Standalone Primary Site
