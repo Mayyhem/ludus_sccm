@@ -203,7 +203,7 @@ ludus:
     role_vars:
       ludus_sccm_sitecode: CAS
       ludus_sccm_sitename: Central Administration Site
-      ludus_sccm_child_site_server_hostname: 'ps1-pss.mayyhem.com'
+      ludus_sccm_child_site_server_hostname: 'ps1-pss'
       ludus_sccm_win_sccm_config_default_template: ExtendPrimaryToCAS.ini.j2
       ludus_sccm_site_server_hostname: 'cas-pss'
       ludus_sccm_sql_server_hostname: 'cas-db'

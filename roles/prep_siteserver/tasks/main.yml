@@ -107,27 +107,7 @@
     state: directory
   when: ludus_sccm_is_primary_or_cas | default(true)
 
-- name: Set RemoteRegistry to standard Automatic
-  ansible.windows.win_shell: sc.exe config RemoteRegistry start= auto
-  when: ludus_sccm_parent_site_server_hostname is defined
-
-- name: Start RemoteRegistry
-  ansible.windows.win_service:
-    name: RemoteRegistry
-    state: started
-  when: ludus_sccm_parent_site_server_hostname is defined
-
-- name: Re-check Remote Registry service status
-  ansible.windows.win_service_info:
-    name: RemoteRegistry
-  register: remote_reg_info
-  when: ludus_sccm_parent_site_server_hostname is defined
-
-- name: Show RemoteRegistry status
-  debug:
-    msg: "RemoteRegistry state: {{ remote_reg_info.services[0].state | default('not found') }}"
-
-- name: Fail if Remote Registry is not started
-  fail:
-    msg: "RemoteRegistry is not running after win_service"
-  when: remote_reg_info.services[0].state != 'started' and ludus_sccm_parent_site_server_hostname is defined
+# Pin ODBC Driver 18 to version 18.5.2 to avoid setup issues with the site database on 18.6.1 and later
+- name: Pin ODBC Driver 18 to version 18.5.2
+  ansible.builtin.include_tasks:
+    file: pin_odbc.yml
