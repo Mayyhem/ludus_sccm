@@ -52,7 +52,7 @@
   vars:
     ansible_become: true
     ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
@@ -66,6 +66,7 @@
       $setupLog = "C:\ConfigMgrSetup.log"
       $prereqLog = "C:\ConfigMgrPrereq.log"
       $tracker = "C:\sccm_stall_tracker.txt"
+      $stallThreshold = {{ ludus_sccm_install_stall_timeout_minutes }}
 
       # Completion criteria:
       # 1) SMS_EXECUTIVE service running
@@ -203,11 +204,11 @@
           if (-not $hasGrowth -and $previousSizes.Count -gt 0) {
               $stallCount++
               $stallSeconds = $stallCount * 60 # Each check is 1 minute apart
-              Write-Output "No log growth - stalled for $stallSeconds seconds ($stallCount/10 checks)"
-              
-              # If stalled for 10 checks (10 minutes), consider it a stall
-              if ($stallCount -ge 10) {
-                  Write-Output "STALL DETECTED after 10 minutes"
+              Write-Output "No log growth - stalled for $stallSeconds seconds ($stallCount/$stallThreshold checks)"
+
+              # If stalled for $stallThreshold checks (1 check per minute), consider it a stall
+              if ($stallCount -ge $stallThreshold) {
+                  Write-Output "STALL DETECTED after $stallThreshold minutes"
                   
                   # Check for duplicate installation error
                   if (Test-Path $prereqLog) {
@@ -260,13 +261,13 @@
   vars:
     ansible_become: true
     ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
 - name: Ensure scheduled task exists for SCCM install (attempt {{ attempt_number }})
   ansible.windows.win_shell: |
-    schtasks.exe /Create /TN 'SCCM-Setup-Install' /TR 'C:\ludus\sccm\cd.retail.LN\SMSSETUP\BIN\X64\setupwpf.exe /SCRIPT C:\ludus\sccm\ConfigMgrSetup.ini' /SC ONCE /ST 00:00 /RL HIGHEST /RU '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}' /RP '{{ defaults.ad_domain_admin_password }}' /F
+    schtasks.exe /Create /TN 'SCCM-Setup-Install' /TR 'C:\ludus\sccm\cd.retail.LN\SMSSETUP\BIN\X64\setupwpf.exe /SCRIPT C:\ludus\sccm\ConfigMgrSetup.ini' /SC ONCE /ST 00:00 /RL HIGHEST /RU '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}' /RP '{{ defaults.ad_domain_admin_password }}' /F
   changed_when: true
 
 - name: Start SCCM install scheduled task (attempt {{ attempt_number }})
@@ -292,7 +293,7 @@
   vars:
     ansible_become: true
     ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
@@ -311,7 +312,7 @@
   vars:
     ansible_become: true
     ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
@@ -324,7 +325,7 @@
   vars:
     ansible_become: true
     ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
@@ -341,7 +342,7 @@
   vars:
     ansible_become: true
     ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
@@ -363,6 +364,6 @@
   vars:
     ansible_become: true
     ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"

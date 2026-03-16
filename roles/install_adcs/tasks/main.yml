@@ -53,7 +53,7 @@
       }
     error_action: stop
     parameters:
-      domain_username: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+      domain_username: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
       domain_password: '{{ defaults.ad_domain_admin_password }}'
       ca_common_name: '{{ ludus_domain_netbios_name }}-CA'
   register: adcs_install

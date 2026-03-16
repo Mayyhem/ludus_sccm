@@ -220,6 +220,7 @@ ludus:
       ludus_sccm_enable_active_directory_group_discovery: false
       ludus_sccm_enable_active_directory_system_discovery: false
       ludus_sccm_enable_active_directory_user_discovery: false
+      ludus_sccm_install_stall_timeout_minutes: 30
 
 
 ############################
@@ -670,6 +671,7 @@ ludus:
       # Secondary site specific settings
       ludus_sccm_secondary_sitecode: 'SEC'
       ludus_sccm_secondary_siteserver_fqdn: 'ps1-sec.mayyhem.com'
+      ludus_sccm_install_stall_timeout_minutes: 30
 
   # PS1-DEV: Development Workstation
   - vm_name: "{{ range_id }}-ps1-dev"
@@ -836,6 +838,7 @@ ludus:
       # Disable client push to prevent conflicts with PS1 site
       ludus_sccm_configure_client_push: false
       ludus_sccm_enable_pxe: false
+      ludus_sccm_install_stall_timeout_minutes: 30
 
 #################################################
 ## Hierarchy Two Standalone Primary Site (HI2) ##
@@ -899,6 +902,7 @@ ludus:
       # Disable client push to prevent conflicts with PS1 site
       ludus_sccm_configure_client_push: false
       ludus_sccm_enable_pxe: false
+      ludus_sccm_install_stall_timeout_minutes: 30
 
 notify:
   urls:

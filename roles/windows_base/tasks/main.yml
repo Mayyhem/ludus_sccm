@@ -34,6 +34,19 @@
         data: 0x00000001
         type: dword
 
+    - name: Set auto-logon to domainadmin
+      ansible.windows.win_regedit:
+        path: "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon"
+        name: "{{ item.name }}"
+        data: "{{ item.data }}"
+        type: string
+      loop:
+        - { name: AutoAdminLogon, data: "1" }
+        - { name: DefaultUserName, data: "{{ defaults.ad_domain_admin }}" }
+        - { name: DefaultDomainName, data: "{{ ludus_domain_fqdn }}" }
+        - { name: DefaultPassword, data: "{{ defaults.ad_domain_admin_password }}" }
+      no_log: true
+
     - name: Enable WebClient
       ansible.builtin.include_tasks:
         file: enable_webdav.yml

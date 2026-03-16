@@ -9,7 +9,7 @@
   vars:
     ansible_become: true
     ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
@@ -84,13 +84,13 @@
   vars:
     ansible_become: true
     ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
 - name: Schedule Content Library move task
   ansible.windows.win_shell: |
-    schtasks.exe /Create /TN 'SCCM-Passive-MoveContentLib' /TR 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\sccm_move_contentlib.ps1 -MoveContentLibTo "\\{{ ludus_sccm_contentlib_hostname }}.{{ ludus_domain_fqdn }}\Share\ContentLib" -SiteCode "{{ ludus_sccm_sitecode }}"' /SC ONCE /ST 00:00 /RL HIGHEST /RU '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}' /RP '{{ defaults.ad_domain_admin_password }}' /F
+    schtasks.exe /Create /TN 'SCCM-Passive-MoveContentLib' /TR 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\sccm_move_contentlib.ps1 -MoveContentLibTo "\\{{ ludus_sccm_contentlib_hostname }}.{{ ludus_domain_fqdn }}\Share\ContentLib" -SiteCode "{{ ludus_sccm_sitecode }}"' /SC ONCE /ST 00:00 /RL HIGHEST /RU '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}' /RP '{{ defaults.ad_domain_admin_password }}' /F
   changed_when: true
 
 - name: Start Content Library move task
@@ -108,7 +108,7 @@
   vars:
     ansible_become: true
     ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
@@ -133,7 +133,7 @@
   vars:
     ansible_become: true
     ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
@@ -147,7 +147,7 @@
   vars:
     ansible_become: true
     ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
@@ -186,13 +186,13 @@
   vars:
     ansible_become: true
     ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
 - name: Schedule site system create task
   ansible.windows.win_shell: |
-    schtasks.exe /Create /TN 'SCCM-Passive-CreateSiteSystem' /TR 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\sccm_create_sitesystem.ps1 -SiteSystemName "{{ ludus_sccm_passive_hostname }}.{{ ludus_domain_fqdn }}" -SiteCode "{{ ludus_sccm_sitecode }}"' /SC ONCE /ST 00:00 /RL HIGHEST /RU '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}' /RP '{{ defaults.ad_domain_admin_password }}' /F
+    schtasks.exe /Create /TN 'SCCM-Passive-CreateSiteSystem' /TR 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\sccm_create_sitesystem.ps1 -SiteSystemName "{{ ludus_sccm_passive_hostname }}.{{ ludus_domain_fqdn }}" -SiteCode "{{ ludus_sccm_sitecode }}"' /SC ONCE /ST 00:00 /RL HIGHEST /RU '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}' /RP '{{ defaults.ad_domain_admin_password }}' /F
   changed_when: true
 
 - name: Start site system create task
@@ -210,7 +210,7 @@
   vars:
     ansible_become: true
     ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
@@ -235,7 +235,7 @@
   vars:
     ansible_become: true
     ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
@@ -249,7 +249,7 @@
   vars:
     ansible_become: true
     ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
@@ -324,13 +324,13 @@
   vars:
     ansible_become: true
     ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
 - name: Schedule add passive site task
   ansible.windows.win_shell: |
-    schtasks.exe /Create /TN 'SCCM-Passive-AddPassiveSite' /TR 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\sccm_add_passive_site.ps1 -SiteSystemName "{{ ludus_sccm_passive_hostname }}.{{ ludus_domain_fqdn }}" -SiteCode "{{ ludus_sccm_sitecode }}"' /SC ONCE /ST 00:00 /RL HIGHEST /RU '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}' /RP '{{ defaults.ad_domain_admin_password }}' /F
+    schtasks.exe /Create /TN 'SCCM-Passive-AddPassiveSite' /TR 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\sccm_add_passive_site.ps1 -SiteSystemName "{{ ludus_sccm_passive_hostname }}.{{ ludus_domain_fqdn }}" -SiteCode "{{ ludus_sccm_sitecode }}"' /SC ONCE /ST 00:00 /RL HIGHEST /RU '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}' /RP '{{ defaults.ad_domain_admin_password }}' /F
   changed_when: true
 
 - name: Start add passive site task
@@ -348,7 +348,7 @@
   vars:
     ansible_become: true
     ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
@@ -373,6 +373,6 @@
   vars:
     ansible_become: true
     ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"

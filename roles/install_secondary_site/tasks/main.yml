@@ -8,7 +8,7 @@
   vars:
     ansible_become: true
     ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
@@ -114,13 +114,13 @@
   vars:
     ansible_become: true
     ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
 - name: Ensure scheduled task exists for Secondary Site install
   ansible.windows.win_shell: |
-    schtasks.exe /Create /TN 'SCCM-Secondary-Install' /TR 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\sccm_install_secondary_site.ps1 -ParentSiteCode "{{ ludus_sccm_sitecode }}" -ServerName "{{ ludus_sccm_secondary_siteserver_fqdn }}" -SiteCode "{{ ludus_sccm_secondary_sitecode }}"' /SC ONCE /ST 00:00 /RL HIGHEST /RU '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}' /RP '{{ defaults.ad_domain_admin_password }}' /F
+    schtasks.exe /Create /TN 'SCCM-Secondary-Install' /TR 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\sccm_install_secondary_site.ps1 -ParentSiteCode "{{ ludus_sccm_sitecode }}" -ServerName "{{ ludus_sccm_secondary_siteserver_fqdn }}" -SiteCode "{{ ludus_sccm_secondary_sitecode }}"' /SC ONCE /ST 00:00 /RL HIGHEST /RU '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}' /RP '{{ defaults.ad_domain_admin_password }}' /F
   changed_when: true
 
 - name: Start Secondary Site install scheduled task
@@ -138,7 +138,7 @@
   vars:
     ansible_become: true
     ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
@@ -163,6 +163,6 @@
   vars:
     ansible_become: true
     ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"

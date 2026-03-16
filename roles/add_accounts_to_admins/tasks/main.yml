@@ -4,13 +4,16 @@
     vars:
       ansible_become: true
       ansible_become_method: runas
-      ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+      ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
       ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
       ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
     name: Administrators
     members: >-
       {{
-        ludus_sccm_add_accounts_to_admins.split(',') | map('trim') | list
+        ludus_sccm_add_accounts_to_admins.split(',')
+        | map('trim')
+        | map('regex_replace', '^(?!.*\\\\)', ludus_domain_netbios_name ~ '\\')
+        | list
         if ludus_sccm_add_accounts_to_admins | length > 0
         else []
       }}

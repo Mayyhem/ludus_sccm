@@ -38,3 +38,6 @@ ludus_enable_pxe_password: false
 ludus_pxe_password: 'Password123'
 ludus_domain_join_account: domainjoin
 ludus_domain_join_password: 'password'
+# ----------------------------------Stall Detection----------------------------------------------
+# Number of minutes with no log growth before the SCCM installer is considered stalled and terminated
+ludus_sccm_install_stall_timeout_minutes: 15
