@@ -29,7 +29,7 @@ author:
 
 EXAMPLES = r'''
 - name: Configure CM Accounts
-  synzack.ludus_sccm.cmaccounts:
+  mayyhem.ludus_sccm.cmaccounts:
     name: 'domain\username'
     password: 'password'
     site_code: '123'

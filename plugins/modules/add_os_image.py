@@ -30,7 +30,7 @@ author:
 
 EXAMPLES = r'''
 - name: Add SCCM OS Image
-  synzack.ludus_sccm.add_os_image:
+  mayyhem.ludus_sccm.add_os_image:
     name: "Windows10"
     path: "\\sccm-sitesrv.ludus.domain\sms_123\OSD\Images\win10.wim"
     site_code: '123'

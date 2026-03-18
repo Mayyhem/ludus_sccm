@@ -1,252 +1,87 @@
-# Troubleshooting
-## Range Deploy Errors
-TASK [Wait for VM to acquire an IP address] ************************************
-An exception occurred during task execution. To see the full traceback, use -vvv. The error was: json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
-fatal: [localhost]: FAILED! => {"msg": "Unexpected failure during module execution: Expecting value: line 1 column 1 (char 0)", "stdout": ""}
-Run `ludus range deploy` again
+# Ludus SCCM Hierarchy Lab
+This project builds on Zach Stein's ([@synzack21](https://x.com/synzack21)) and [Erik Hunstad](https://github.com/kernel-sanders)'s [Ludus](https://ludus.cloud) SCCM project (https://github.com/Synzack/ludus_sccm) to expand the standalone primary site (`PS1`) to a parent central administration site (`CAS`) and child secondary site (`SEC`), resulting in a three-tiered SCCM hierarchy.
 
-TASK [Check that we have a primary DC IP] **************************************
-fatal: [cthompson-ps1-sec]: FAILED! => {"changed": false, "msg": "The primary DC does not have an ansible_host value - it is likely unreachable. Reboot the primary DC (cthompson-dc) and try again."}
-Power the range off/on and run `ludus range deploy` again
+## Ludus
+To install Ludus, follow the instructions at https://docs.ludus.cloud/docs/intro/.
 
-"[NuGet] Error downloading 'chocolatey-compatibility.extension.1.0.0' from 'https://community.chocolatey.org/api/v2/package/chocolatey-compatibility.extension/1.0.0'.", "[NuGet] Response status code does not indicate success: 429 (Too Many Requests)."
-Start the Nexus host and run `ludus range deploy` again
+## Lab Systems
+The SCCM environment contains:
+- A domain controller (`DC`)
+- A central administration site (`CAS`) with the following site system roles:
+- site database (`CAS-DB`)
+- service connection point (`CAS-SCP`)
+- A child primary site (`PS1`) under `CAS` with the following site system roles installed on separate systems:
+  - site database (`PS1-DB`)
+  - SMS Provider (`PS1-SMS`)
+  - management point (`PS1-MP`)
+  - distribution point (`PS1-DP`)
+  - content library (`PS1-LIB`)
+  - passive site server (`PS1-PSV`)
+  - development workstation (`PS1-DEV`)
+- A child secondary site (`SEC`) under `PS1` with a secondary site server (`PS1-SEC`) hosting the management point and distribution point site system roles
+- A second primary site (`PS2`) that can be manually joined to `CAS` to share a hierarchy with `PS1` (I’d like to automate this in the future) with the following site systems:
+  - standalone primary site server with co-hosted site database (`PS2-PSS`)
+- A second, independent hierarchy (`HI2`) with the following site systems:
+  - standalone primary site server with co-hosted site database (`HI2-PSS`)
 
-"The task includes an option with an undefined variable" on "Show the sAMAccountName for" task
-Power the range off/on and run `ludus range deploy` again
+In `CAS` and `PS1`, each of the site system roles are installed on a system that is remote from the primary site server and other site system roles, allowing each role’s functions and telemetry to be isolated to facilitate research and development. All domain-joined systems (including the ones that serve `HI2`) become SCCM client devices via automatic client push installation.
 
-"Unhandled exception while executing module: Unable to find a default server with Active Directory Web Services running."
-Power the range off/on and run `ludus range deploy` again
+Installation occurs in roughly the following order:
+- All systems are stood up with firewall and Defender disabled and WebClient running
+- A domain controller (`DC`) with Active Directory Certificate Services (`ADCS`) installed
+- The primary site server for the CAS primary site (`CAS-PSS`) is added to the local admins group on the other systems in `CAS`
+- The primary site server for the `PS1` primary site (`PS1-PSS`) is added to the local admins group on the other systems in `PS1`
+- Systems are prepped for site system role installation
+- MSSQL is installed on `PS1-DB`, `CAS-DB`, and `PS1-PSV`
+- The `CAS-PSS` primary site server is added to the sysadmin MSSQL server role on the the `CAS` site database (`CAS-DB`)
+- The `PS1-PSS` primary site server is added to the sysadmin MSSQL server role on the the `PS1` site databases (`PS1-DB`, `PS1-PSV`)
+- The `PS1` primary site is installed on `PS1-PSS` with:
+  - a network access account
+  - Active Directory system/user/group discovery
+  - automatic site assignment and site-wide client push installation
+  - a PXE-enabled distribution point
+- The `PS1` primary site is extended to a parent central administration site (`CAS`)
+- The content library is moved from `PS1-PSS` to `PS1-LIB` to support a passive site
+- The passive site server for `PS1` (`PS1-PSV`) is added to the local admins group on relevant systems
+- The passive site server is installed for `PS1`
+- A child secondary site is installed under `PS1` (`SEC`)
+- A second primary site (`PS2`) is installed on a standalone primary site server (`PS2-PSS`)
+- A second, independent hierarchy (`HI2`) is installed on a standalone primary site server (`HI2-PSS`)
 
-internal error: failed to become user 'mayyhem.com\\domainadmin': Exception calling \"CreateProcessAsUser\" with \"9\" argument(s): \"Some or all identity references could not be translated.\
-Power the range off/on and run `ludus range deploy` again
-
-"Failed to install Windows Feature: The request to add or remove features on the specified server failed.\r\nInstallation of one or more roles, role services, or features failed.\nThe service cannot be started, either because it is disabled or because it has no enabled devices associated with it."
-Require windows_base before this role
-
-"Unhandled exception while executing module: Cannot find path 'HKLM:\\SOFTWARE\\Wow6432Node\\Microsoft\\ConfigMgr10\\AdminUI\\Connection' because it does not exist."
-Redeploy
-
-"Unhandled exception while executing module:  Computer \"PS1-LIB\" is not responding. The target computer is either turned off or Remote Scheduled Tasks Management Firewall rules are disabled.\r\nParameter name: computer"
-Require windows_base before this role
-
-timeout while waiting for file C:\\sccm_add_passive_site.log to be present
-Run again
-
-Failed to connect to SQL service
-Manually log in as domainadmin, uninstall MSSQL Server on server, then reboot, then redeploy
-
-# To do
-Upgrade version from 2303 to current or enable automatic upgrade
-
-# What's New
-### Version 1.0.2
-- Updated SQL download link to SQL Server 2022 Eval due to breaks in [Takeover 1](https://github.com/subat0mik/Misconfiguration-Manager/blob/main/attack-techniques/TAKEOVER/TAKEOVER-1/takeover-1_description.md) authentication
-- To update your cache, please remove "*enu_sql_server_2022_standard_edition_x64_dvd_43079f69.iso*" from the directory at ***/opt/ludus/resources/sccm/*** on your Ludus host, destroy, and rebuild the lab
-
-# SCCM Collection for Ansible and [Ludus](https://ludus.cloud)
-
-This collection includes Ansible roles to install and configure SCCM. For a good example of the collection's usage, see the `sccm-range-config.yml`.
-
-Roles included in this collection:
-
-  - `synzack.ludus_sccm.disable_firewall`
-  - `synzack.ludus_sccm.enable_webdav`
-  - `synzack.ludus_sccm.install_adcs`
-  - `synzack.ludus_sccm.ludus_sccm_distro`
-  - `synzack.ludus_sccm.ludus_sccm_mgmt`
-  - `synzack.ludus_sccm.ludus_sccm_siteserver`
-  - `synzack.ludus_sccm.ludus_sccm_sql`
+This lab is susceptible to ALL attack techniques and subtechniques detailed in Misconfiguration Manager at the time of this writing with the exception of ELEVATE-4 and ELEVATE-5 (because PKI certs are not required for client authentication in the lab) and TAKEOVER-9 (because I didn’t need to link databases with sysadmin privileges for the collector testing and writing Ansible roles is time consuming).
 
 ## Installation in [Ludus](ludus.cloud)
 
 Install via Ansible Galaxy:
 
 ```
-ludus ansible collection add synzack.ludus_sccm
+ludus ansible collection add mayyhem.ludus_sccm
 ```
-
-### Role Requirements
-
-None
 
 ## Notes
 * Due to unknown issues with SCCM, *.local* domain suffixes will not work properly. We recommend using something else such as *.domain* or *.lab* for your domain suffix
-* If you wish to add client push to the DC, you will need to add Remote Scheduled Tasks Management firewall rules or use the *disable_firewall* role
-* At this time, all 4 site server roles are needed to deploy SCCM, there is no standalone option yet
+* NetBIOS names must be 15 characters or less in Active Directory
 
 ## Usage
-> [!WARNING]
-> All SCCM VM hostnames MUST be <= 15 characters
-
-<p align="center"><img width="450" height="250" src="./sccm_netbios_limit.png"></p>
-
-Here's an example Ludus configuration that uses this module to set up a full SCCM deployment, along with default values:
-
-```yaml
-ludus:
-  - vm_name: "{{ range_id }}-DC01"
-    hostname: "DC01"
-    template: win2022-server-x64-template
-    vlan: 10
-    ip_last_octet: 10
-    ram_gb: 4
-    ram_min_gb: 1
-    cpus: 2
-    windows:
-      sysprep: true
-    domain:
-      fqdn: ludus.domain
-      role: primary-dc
-    roles:
-      - synzack.ludus_sccm.install_adcs
-      - synzack.ludus_sccm.disable_firewall
-
-  - vm_name: "{{ range_id }}-Workstation"
-    hostname: "Workstation"
-    template: win11-22h2-x64-enterprise-template
-    vlan: 10
-    ip_last_octet: 11
-    ram_gb: 4
-    ram_min_gb: 1
-    cpus: 2
-    windows:
-      sysprep: true
-    domain:
-      fqdn: ludus.domain
-      role: member
-    roles:
-      - synzack.ludus_sccm.disable_firewall
-
-  - vm_name: "{{ range_id }}-sccm-distro"
-    hostname: "sccm-distro"
-    template: win2022-server-x64-template
-    vlan: 10
-    ip_last_octet: 12
-    ram_gb: 4
-    ram_min_gb: 1
-    cpus: 4
-    windows:
-      sysprep: true
-    domain:
-      fqdn: ludus.domain
-      role: member
-    roles:
-      - synzack.ludus_sccm.ludus_sccm_distro
-    role_vars:
-      ludus_sccm_site_server_hostname: 'sccm-sitesrv' 
-
-  - vm_name: "{{ range_id }}-sccm-sql"
-    hostname: "sccm-sql"
-    template: win2022-server-x64-template
-    vlan: 10
-    ip_last_octet: 13
-    ram_gb: 4
-    ram_min_gb: 1
-    cpus: 4
-    windows:
-      sysprep: true
-    domain:
-      fqdn: ludus.domain
-      role: member
-    roles:
-      - synzack.ludus_sccm.ludus_sccm_sql
-    role_vars:
-      ludus_sccm_site_server_hostname: 'sccm-sitesrv'    
-      ludus_sccm_sql_server_hostname: 'sccm-sql'         
-      ludus_sccm_sql_svc_account_username: 'sqlsccmsvc'  
-      ludus_sccm_sql_svc_account_password: 'Password123' 
-
-  - vm_name: "{{ range_id }}-sccm-mgmt"
-    hostname: "sccm-mgmt"
-    template: win2022-server-x64-template
-    vlan: 10
-    ip_last_octet: 14
-    ram_gb: 4
-    ram_min_gb: 1
-    cpus: 4
-    windows:
-      sysprep: true
-    domain:
-      fqdn: ludus.domain
-      role: member
-    roles:
-      - synzack.ludus_sccm.ludus_sccm_mgmt
-    role_vars:
-      ludus_sccm_site_server_hostname: "sccm-sitesrv" 
-
-  - vm_name: "{{ range_id }}-sccm-sitesrv"
-    hostname: "sccm-sitesrv" 
-    template: win2022-server-x64-template
-    vlan: 10
-    ip_last_octet: 15
-    ram_gb: 4
-    ram_min_gb: 1
-    cpus: 4
-    windows:
-      sysprep: true
-    domain:
-      fqdn: ludus.domain
-      role: member
-    roles:
-      - synzack.ludus_sccm.ludus_sccm_siteserver
-      - synzack.ludus_sccm.enable_webdav
-    role_vars:
-      ludus_sccm_sitecode: 123           
-      ludus_sccm_sitename: Primary Site  
-      ludus_sccm_site_server_hostname: 'sccm-sitesrv'  
-      ludus_sccm_distro_server_hostname: 'sccm-distro' 
-      ludus_sccm_mgmt_server_hostname: 'sccm-mgmt'     
-      ludus_sccm_sql_server_hostname: 'sccm-sql'       
-      # --------------------------NAA Account-------------------------------------------------
-      ludus_sccm_configure_naa: true
-      ludus_sccm_naa_username: 'sccm_naa'
-      ludus_sccm_naa_password: 'Password123'
-      # --------------------------Client Push Account-----------------------------------------
-      ludus_sccm_configure_client_push: true
-      ludus_sccm_client_push_username: 'sccm_push'
-      ludus_sccm_client_push_password: 'Password123'
-      ludus_sccm_enable_automatic_client_push_installation: true
-      ludus_sccm_enable_system_type_configuration_manager: true
-      ludus_sccm_enable_system_type_server: true
-      ludus_sccm_enable_system_type_workstation: true
-      ludus_sccm_install_client_to_domain_controller: false  #"True" Requires Remote Scheduled Tasks Managmenet firewall rules enabled (or no firewall)
-      ludus_sccm_allow_NTLM_fallback: true
-      # ---------------------------Discovery Methods------------------------------------------
-      ludus_sccm_enable_active_directory_forest_discovery: true
-      ludus_sccm_enable_active_directory_boundary_creation: true
-      ludus_sccm_enable_subnet_boundary_creation: true
-      ludus_sccm_enable_active_directory_group_discovery: true
-      ludus_sccm_enable_active_directory_system_discovery: true
-      ludus_sccm_enable_active_directory_user_discovery: true
-      # ----------------------------------PXE-------------------------------------------------
-      ludus_sccm_enable_pxe: true
-      ludus_enable_pxe_password: false
-      ludus_pxe_password: 'Password123'
-      ludus_domain_join_account: domainadmin
-      ludus_domain_join_password: 'password'
-```
-
-Then set the config and deploy it
+Set the config and deploy it:
 
 ```
-ludus range config set -f sccm-range-config.yml
+ludus range config set -f new-config.yml
 ludus range deploy
 ```
 
 ## Building the Collection from Source
-
 ```
-git clone https://github.com/Synzack/ludus_sccm
+git clone https://github.com/Mayyhem/ludus_sccm
 ansible-galaxy collection build
 ```
 
-### Ludus Install of manually built collection
+### Ludus Install of Manually Built collection
 
 via Ludus ansible collection
 ```
 python3 -m http.server 80
-ludus ansible collection add http://<network ip>/synzack-ludus_sccm-1.0.0.tar.gz
+ludus ansible collection add http://<network ip>/mayyhem-ludus_sccm-1.0.0.tar.gz
 ```
 
 via scp
@@ -256,10 +91,7 @@ ssh root@<ludus-host> "mkdir -r /opt/ludus/users/$LUDUS_USER_NAME/.ansible/colle
 rsync -av --exclude .git/ ./ root@<ludus-host>:/opt/ludus/users/$LUDUS_USER_NAME/.ansible/collections/ansible_collections/synzack/ludus_sccm/
 ```
 
-## License
+## Troubleshooting
+The majority of range deployment errors can be corrected by executing `ludus power off -n all && sleep 300 && ludus power on -n all && ludus range deploy && ludus range logs -f` to reboot everything and try again.
 
-GPLv3
-
-## Author
-
-This collection was created by [Zach Stein](https://twitter.com/synzack21) and [Erik Hunstad](https://github.com/kernel-sanders), for [Ludus](https://ludus.cloud).
+If you've already passed the initial setup of the VMs and reach deployment of the Ansible roles defined in this project, you can run `ludus range deploy` with the `-t user-defined-roles` option to skip setup.

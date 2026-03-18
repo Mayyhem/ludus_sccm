@@ -28,7 +28,7 @@ author:
 
 EXAMPLES = r'''
 - name: Add SCCM OS Image
-  synzack.ludus_sccm.enable_pxe:
+  mayyhem.ludus_sccm.enable_pxe:
     toggle_password: true
     password: 'Password123'
     site_code: '123'

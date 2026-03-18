@@ -59,7 +59,7 @@ author:
 
 EXAMPLES = r'''
 - name: Configure SCCM Discovery Methods
-  synzack.ludus_sccm.discovery_methods:
+  mayyhem.ludus_sccm.discovery_methods:
     site_code: "123"
     enable_forest_discovery: true
     enable_ad_boundary_creation: true

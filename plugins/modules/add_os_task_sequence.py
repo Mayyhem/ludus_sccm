@@ -46,7 +46,7 @@ author:
 
 EXAMPLES = r'''
 - name: Create OS Image Task Sequence
-  synzack.ludus_sccm.add_os_task_sequence:
+  mayyhem.ludus_sccm.add_os_task_sequence:
     name: "Windows10"
     site_code: '123'
     domain_name: 'ludus.domain'

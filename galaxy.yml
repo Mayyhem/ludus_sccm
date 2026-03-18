@@ -2,7 +2,7 @@
 # The namespace of the collection. This can be a company/brand/organization or product namespace under which all
 # content lives. May only contain alphanumeric lowercase characters and underscores. Namespaces cannot start with
 # underscores or numbers and cannot contain consecutive underscores
-namespace: synzack
+namespace: mayyhem
 
 # The name of the collection. Has the same character restrictions as 'namespace'
 name: ludus_sccm
@@ -18,6 +18,7 @@ readme: README.md
 authors:
 - Zach Stein (synzack)
 - Erik Hunstad (badsectorlabs)
+- Chris Thompson (_Mayyhem)
 
 ### OPTIONAL but strongly recommended
 # A short summary description of the collection
@@ -45,16 +46,16 @@ tags:
 dependencies: {}
 
 # The URL of the originating SCM repository
-repository: https://github.com/Synzack/ludus_sccm
+repository: https://github.com/Mayyhem/ludus_sccm
 
 # The URL to any online docs
-documentation: https://github.com/Synzack/ludus_sccm
+documentation: https://github.com/Mayyhem/ludus_sccm
 
 # The URL to the homepage of the collection/project
-homepage: https://github.com/Synzack/ludus_sccm
+homepage: https://github.com/Mayyhem/ludus_sccm
 
 # The URL to the collection issue tracker
-issues: https://github.com/Synzack/ludus_sccm/issues
+issues: https://github.com/Mayyhem/ludus_sccm/issues
 
 # A list of file glob-like patterns used to filter any files or directories that should not be included in the build
 # artifact. A pattern is matched from the relative path of the file or directory of the collection directory. This

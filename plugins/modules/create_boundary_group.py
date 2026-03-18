@@ -39,7 +39,7 @@ author:
 
 EXAMPLES = r'''
 - name: Create Boundary Group
-  synzack.ludus_sccm.create_boundary_group:
+  mayyhem.ludus_sccm.create_boundary_group:
     site_code: 123
     boundary_group_name: Default
     boundary_group_description: Default Description
