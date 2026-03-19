@@ -46,14 +46,12 @@ ludus:
       block_internet: false
     vlan: 10
     ip_last_octet: 100
-    ram_gb: 6
+    ram_gb: 4
     ram_min_gb: 1
-    cpus: 4
+    cpus: 2
     windows:
       chocolatey_packages:
-        - procmon
         - systeminformer-nightlybuilds
-        - wireshark
       chocolatey_ignore_checksums: true
       sysprep: true
     domain:
@@ -84,10 +82,8 @@ ludus:
     cpus: 4
     windows:
       chocolatey_packages:
-        - procmon
         - sql-server-management-studio
         - systeminformer-nightlybuilds
-        - wireshark
       chocolatey_ignore_checksums: true
       sysprep: true
     domain:
@@ -130,9 +126,7 @@ ludus:
     cpus: 2
     windows:
       chocolatey_packages:
-        - procmon
         - systeminformer-nightlybuilds
-        - wireshark
       chocolatey_ignore_checksums: true
       sysprep: true
     domain:
@@ -168,10 +162,8 @@ ludus:
     cpus: 4
     windows:
       chocolatey_packages:
-        - procmon
         - sql-server-management-studio
         - systeminformer-nightlybuilds
-        - wireshark
       chocolatey_ignore_checksums: true
       sysprep: true
     domain:
@@ -242,10 +234,8 @@ ludus:
     cpus: 4
     windows:
       chocolatey_packages:
-        - procmon
         - sql-server-management-studio
         - systeminformer-nightlybuilds
-        - wireshark
       chocolatey_ignore_checksums: true
       sysprep: true
     domain:
@@ -291,9 +281,7 @@ ludus:
     cpus: 2
     windows:
       chocolatey_packages:
-        - procmon
         - systeminformer-nightlybuilds
-        - wireshark
       chocolatey_ignore_checksums: true
       sysprep: true
     domain:
@@ -340,10 +328,8 @@ ludus:
     cpus: 2
     windows:
       chocolatey_packages:
-        - procmon
         - sql-server-management-studio
         - systeminformer-nightlybuilds
-        - wireshark
       chocolatey_ignore_checksums: true
       sysprep: true
     domain:
@@ -362,11 +348,6 @@ ludus:
           role: mayyhem.ludus_sccm.windows_base
         - vm_name: "{{ range_id }}-ps1-pss"
           role: mayyhem.ludus_sccm.windows_base
-      # Wait for admins to be added to site database server before installing MSSQL
-      - name: mayyhem.ludus_sccm.install_site_database
-        depends_on:
-          - vm_name: "{{ range_id }}-ps1-psv"
-            role: mayyhem.ludus_sccm.add_pss_to_admins
       # Wait for base installation settings before prepping site server
       - name: mayyhem.ludus_sccm.prep_siteserver
         depends_on:
@@ -376,8 +357,6 @@ ludus:
       ludus_sccm_is_primary_or_cas: false
       ludus_sccm_sitecode: PS1
       ludus_sccm_site_server_hostname: 'ps1-pss'
-      ludus_sccm_sql_server_hostname: 'ps1-psv'
-      ludus_sccm_sql_additional_sysadmin_accounts: 'MAYYHEM\domainadmin'
 
   # PS1-DP: Distribution Point
   - vm_name: "{{ range_id }}-ps1-dp"
@@ -393,9 +372,7 @@ ludus:
     cpus: 2
     windows:
       chocolatey_packages:
-        - procmon
         - systeminformer-nightlybuilds
-        - wireshark
       chocolatey_ignore_checksums: true
       sysprep: true
     domain:
@@ -442,9 +419,7 @@ ludus:
     cpus: 2
     windows:
       chocolatey_packages:
-        - procmon
         - systeminformer-nightlybuilds
-        - wireshark
       chocolatey_ignore_checksums: true
       sysprep: true
     domain:
@@ -491,9 +466,7 @@ ludus:
     cpus: 2
     windows:
       chocolatey_packages:
-        - sysinternals
         - systeminformer-nightlybuilds
-        - wireshark
       chocolatey_ignore_checksums: true
       sysprep: true
     domain:
@@ -538,10 +511,8 @@ ludus:
     cpus: 4
     windows:
       chocolatey_packages:
-        - procmon
         - sql-server-management-studio
         - systeminformer-nightlybuilds
-        - wireshark
       chocolatey_ignore_checksums: true
       sysprep: true
     domain:
@@ -683,7 +654,7 @@ ludus:
       block_internet: false
     vlan: 11
     ip_last_octet: 10
-    ram_gb: 8
+    ram_gb: 6
     ram_min_gb: 1
     cpus: 4
     windows:
@@ -732,10 +703,8 @@ ludus:
     cpus: 2
     windows:
       chocolatey_packages:
-        - procmon
         - sql-server-management-studio
         - systeminformer-nightlybuilds
-        - wireshark
       chocolatey_ignore_checksums: true
       sysprep: true
     domain:
@@ -789,10 +758,8 @@ ludus:
     cpus: 4
     windows:
       chocolatey_packages:
-        - procmon
         - sql-server-management-studio
         - systeminformer-nightlybuilds
-        - wireshark
       chocolatey_ignore_checksums: true
       sysprep: true
     domain:
@@ -859,10 +826,8 @@ ludus:
     cpus: 4
     windows:
       chocolatey_packages:
-        - procmon
         - sql-server-management-studio
         - systeminformer-nightlybuilds
-        - wireshark
       chocolatey_ignore_checksums: true
       sysprep: true
     domain:

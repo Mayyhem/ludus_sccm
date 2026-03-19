@@ -1,6 +1,6 @@
 ---
 - name: Enable PXE on Distribution Point
-  synzack.ludus_sccm.enable_pxe:
+  mayyhem.ludus_sccm.enable_pxe:
     toggle_password: '{{ ludus_enable_pxe_password }}'
     password:  '{{ ludus_pxe_password }}'
     site_code: '{{ ludus_sccm_sitecode }}'
@@ -53,7 +53,7 @@
   when: not wim_host_check.stat.exists
 
 - name: Add and Distribute SCCM OS & Boot Images
-  synzack.ludus_sccm.add_os_image:
+  mayyhem.ludus_sccm.add_os_image:
     name: "Windows11"
     path: '\\{{ ludus_sccm_site_server_hostname }}.{{ ludus_domain_fqdn }}\sms_{{ ludus_sccm_sitecode }}\OSD\Images\win11.wim'
     site_code: '{{ ludus_sccm_sitecode }}'
@@ -65,7 +65,7 @@
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
 - name: Create OS Image Task Sequence
-  synzack.ludus_sccm.add_os_task_sequence:
+  mayyhem.ludus_sccm.add_os_task_sequence:
     name: "Deploy-OS"
     site_code: '{{ ludus_sccm_sitecode }}'
     domain_name: '{{ ludus_domain_fqdn }}'

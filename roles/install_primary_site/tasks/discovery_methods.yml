@@ -1,6 +1,6 @@
 ---
 - name: Configure SCCM Discovery Methods
-  synzack.ludus_sccm.discovery_methods:
+  mayyhem.ludus_sccm.discovery_methods:
     site_code: '{{ ludus_sccm_sitecode }}'
     enable_forest_discovery: '{{ ludus_sccm_enable_active_directory_forest_discovery }}'
     enable_ad_boundary_creation: '{{ ludus_sccm_enable_active_directory_boundary_creation }}'
@@ -22,7 +22,7 @@
 
 # Configure Boundary Group
 - name: Configure Boundary Group
-  synzack.ludus_sccm.create_boundary_group:
+  mayyhem.ludus_sccm.create_boundary_group:
     site_code: '{{ ludus_sccm_sitecode }}'
     boundary_group_name: "Discovery Default Boundary Group"
     boundary_group_description: "Default Ludus Boundary Group"

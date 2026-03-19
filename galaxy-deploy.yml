@@ -16,7 +16,6 @@
   gather_facts: false
 
   vars:
-    #namespace: synzack
     namespace: mayyhem
     collection: ludus_sccm
     # Requires github_tag to be set when calling playbook.
