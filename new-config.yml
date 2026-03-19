@@ -609,8 +609,6 @@ ludus:
           - vm_name: "{{ range_id }}-ps1-lib"
             role: mayyhem.ludus_sccm.create_contentlib_share
           - vm_name: "{{ range_id }}-ps1-psv"
-            role: mayyhem.ludus_sccm.install_site_database
-          - vm_name: "{{ range_id }}-ps1-psv"
             role: mayyhem.ludus_sccm.prep_siteserver
           - vm_name: "{{ range_id }}-ps1-psv"
             role: mayyhem.ludus_sccm.add_pss_to_admins
