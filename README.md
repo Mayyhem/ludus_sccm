@@ -22,12 +22,8 @@ The SCCM environment contains:
   - passive site server (`PS1-PSV`)
   - development workstation (`PS1-DEV`)
 - A child secondary site (`SEC`) under `PS1` with a secondary site server (`PS1-SEC`) hosting the management point and distribution point site system roles
-- A second primary site (`PS2`) that can be manually joined to `CAS` to share a hierarchy with `PS1` (I’d like to automate this in the future) with the following site systems:
-  - standalone primary site server with co-hosted site database (`PS2-PSS`)
-- A second, independent hierarchy (`HI2`) with the following site systems:
-  - standalone primary site server with co-hosted site database (`HI2-PSS`)
 
-In `CAS` and `PS1`, each of the site system roles are installed on a system that is remote from the primary site server and other site system roles, allowing each role’s functions and telemetry to be isolated to facilitate research and development. All domain-joined systems (including the ones that serve `HI2`) become SCCM client devices in the PS1 primary site via automatic client push installation.
+In `CAS` and `PS1`, each of the site system roles are installed on a system that is remote from the primary site server and other site system roles, allowing each role’s functions and telemetry to be isolated to facilitate research and development. All domain-joined systems become SCCM client devices in the `PS1` primary site via automatic client push installation.
 
 Installation occurs in roughly the following order:
 - All systems are stood up with firewall and Defender disabled and WebClient running
@@ -48,8 +44,6 @@ Installation occurs in roughly the following order:
 - The passive site server for `PS1` (`PS1-PSV`) is added to the local admins group on relevant systems
 - The passive site server is installed for `PS1`
 - A child secondary site is installed under `PS1` (`SEC`)
-- A second primary site (`PS2`) is installed on a standalone primary site server (`PS2-PSS`)
-- A second, independent hierarchy (`HI2`) is installed on a standalone primary site server (`HI2-PSS`)
 
 This lab is susceptible to ALL attack techniques and subtechniques detailed in Misconfiguration Manager at the time of this writing with the exception of ELEVATE-4 and ELEVATE-5 (because PKI certs are not required for client authentication in the lab) and TAKEOVER-9 (because I didn’t need to link databases with sysadmin privileges for the collector testing and writing Ansible roles is time consuming).
 
@@ -61,7 +55,7 @@ In the future, I’d like to add a second child primary site of `CAS`, but I hav
 
 This lab is beefy. I’ve been successful standing it up on my laptop that has 16 CPU cores, 64GB RAM, and 256GB free disk space, but I’ve had the best results with more resources. You may need to reduce the `cpu` and `ram_gb` allocated to each system in `new-config.yml` depending on your available resources.
 
-You can also comment out VMs in the Ludus configuration file that you don’t think you’ll use to consume fewer resources (e.g., PS2-PSS, HI2-PSS, CAS-SCP).
+You can also comment out VMs in the Ludus configuration file that you don’t think you’ll use to consume fewer resources (e.g., `CAS-SCP`).
 
 Due to unknown issues with SCCM, *.local* domain suffixes will not work properly. Zach and Erik recommended using something else such as *.domain* or *.lab* for your domain suffix.
 
@@ -105,14 +99,14 @@ ludus ansible collection add http://<network ip>/Mayyhem-ludus_sccm-1.0.0.tar.gz
 The majority of range deployment errors can be corrected by executing:
 
 ```
-ludus power off -n all && sleep 300 && ludus power on -n all && ludus range deploy && ludus range logs -f
+ludus power off -n all && sleep 300 && ludus power on -n all && sleep 300 && ludus range deploy && ludus range logs -f
 ```
 
 This will reboot everything and try again.
 
 If you've already passed the initial setup of the VMs and reach deployment of the Ansible roles defined in this project, you can run `ludus range deploy` with the `-t user-defined-roles` option to skip setup.
 
-If that doesn’t work, hit me up with your logs and I’ll do my best to help you resolve the issue:
+If that doesn’t work, try tearing it down and rebuilding. If that doesn't work either, please hit me up with your logs and I’ll do my best to help you resolve the issue:
 
 ```
 ludus range logs
