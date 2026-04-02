@@ -31,9 +31,9 @@ Installation occurs in roughly the following order:
 - The primary site server for the CAS primary site (`CAS-PSS`) is added to the local admins group on the other systems in `CAS`
 - The primary site server for the `PS1` primary site (`PS1-PSS`) is added to the local admins group on the other systems in `PS1`
 - Systems are prepped for site system role installation
-- MSSQL is installed on `PS1-DB`, `CAS-DB`, and `PS1-PSV`
-- The `CAS-PSS` primary site server is added to the sysadmin MSSQL server role on the the `CAS` site database (`CAS-DB`)
-- The `PS1-PSS` primary site server is added to the sysadmin MSSQL server role on the the `PS1` site databases (`PS1-DB`, `PS1-PSV`)
+- MSSQL is installed on `PS1-DB` and `CAS-DB`
+- The `CAS-PSS` primary site server is added to the sysadmin MSSQL server role in the the `CAS` site database (`CAS-DB`)
+- The `PS1-PSS` primary site server is added to the sysadmin MSSQL server role in the the `PS1` site database (`PS1-DB`)
 - The `PS1` primary site is installed on `PS1-PSS` with:
   - a network access account
   - Active Directory system/user/group discovery
@@ -106,7 +106,7 @@ This will reboot everything and try again.
 
 If you've already passed the initial setup of the VMs and reach deployment of the Ansible roles defined in this project, you can run `ludus range deploy` with the `-t user-defined-roles` option to skip setup.
 
-If that doesn’t work, try tearing it down and rebuilding. If that doesn't work either, please hit me up with your logs and I’ll do my best to help you resolve the issue:
+If that doesn’t work, try tearing it down and rebuilding. If that doesn't work either, pleasehit me up with your logs and I’ll do my best to help you resolve the issue:
 
 ```
 ludus range logs
