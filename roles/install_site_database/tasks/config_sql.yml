@@ -18,6 +18,7 @@
     name: '{{ ludus_sccm_sql_svc_account_username }}'
     password: '{{ ludus_sccm_sql_svc_account_password }}'
     state: present
+    password_never_expires: true
     spn:
       set:
         - 'MSSQLSvc/{{ ludus_sccm_sql_server_hostname }}:1433'
