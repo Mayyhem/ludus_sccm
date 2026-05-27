@@ -3,6 +3,7 @@ ludus_install_directory: /opt/ludus
 ludus_sccm_host_path: "C:\\ludus\\sccm"
 ludus_sccm_sql_svc_account_username: 'sccmsqlsvc'
 ludus_sccm_sql_svc_account_password: 'Password123'
+ludus_iso_path: "/var/lib/vz/template/iso"
 #--------------------------Network Access Account--------------------------------
 ludus_sccm_configure_naa: true
 ludus_sccm_naa_username: 'networkaccess'
