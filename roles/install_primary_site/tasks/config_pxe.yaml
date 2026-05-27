@@ -23,7 +23,7 @@
 
 - name: Copy ISO file to Site Server
   ansible.windows.win_copy:
-    src: "/var/lib/vz/template/iso/22621.525.220925-0207.ni_release_svc_refresh_CLIENTENTERPRISEEVAL_OEMRET_x64FRE_en-us.iso"
+    src: "{{ ludus_iso_path }}/22621.525.220925-0207.ni_release_svc_refresh_CLIENTENTERPRISEEVAL_OEMRET_x64FRE_en-us.iso"
     dest: "{{ ludus_sccm_host_path }}\\win11.iso"
   when: not file_host_check.stat.exists
 
