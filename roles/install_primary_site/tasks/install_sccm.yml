@@ -14,11 +14,19 @@
 
 - name: Probe SQL TCP port
   ansible.windows.win_shell: |
-    $result = Test-NetConnection -ComputerName "{{ effective_sql_server_hostname }}" -Port 1433 -InformationLevel Detailed
+    $result = Test-NetConnection -ComputerName "{{ effective_sql_server_hostname }}" -Port 1433 -InformationLevel Detailed -WarningAction SilentlyContinue
     if ($result.TcpTestSucceeded) { Write-Output "open"; exit 0 } else { Write-Output "closed"; exit 1 }
   register: sql_probe
   changed_when: false
   failed_when: false
+  # SQL Server (MSSQLSERVER) is set to delayed start by default after
+  # install; if the SQL host was rebooted (or is booting) when this
+  # probe fires, port 1433 may briefly be closed even though the
+  # service will come up shortly. Retry across ~5 minutes before
+  # deciding SQL is unreachable.
+  until: sql_probe.stdout | default('closed') | trim == 'open'
+  retries: 30
+  delay: 10
 
 - name: Decide on proceeding based on SQL reachability
   block:

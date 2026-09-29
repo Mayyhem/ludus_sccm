@@ -17,23 +17,47 @@ Import-Module "C:\\Program Files (x86)\\Microsoft Configuration Manager\\AdminCo
 if ((Get-PSDrive -Name $module.Params.site_code -PSProvider CMSite -ErrorAction SilentlyContinue) -eq $null)
 {
     $ProviderMachineName = (Get-ItemProperty 'HKLM:\SOFTWARE\Wow6432Node\Microsoft\ConfigMgr10\AdminUI\Connection' -Name Server).Server
-    New-PSDrive -Name $module.Params.site_code -PSProvider CMSite -Root $ProviderMachineName 
+    New-PSDrive -Name $module.Params.site_code -PSProvider CMSite -Root $ProviderMachineName
 }
 
 Set-Location "$($module.Params.site_code):\"
 
 $osExists = Get-CMOperatingSystemImage -Name $module.Params.name
 
-if($osExists) {
-    $module.ExitJson()
-} else {
-    New-CMOperatingSystemImage -Name $module.Params.name -Path $module.Params.path
-
-    $DP = Get-CMDistributionPoint
-    $DP_FQDN = $DP.NetworkOSPath -replace "\\", ""
-
-    Start-CMContentDistribution -BootImageName "Boot image (x64)" -DistributionPointName $DP_FQDN
-    Start-CMContentDistribution -OperatingSystemImageName $module.Params.name -DistributionPointName $DP_FQDN
-
+if ($osExists) {
     $module.ExitJson()
 }
+
+# Retry New-CMOperatingSystemImage across a WQL "Not found" — post-CAS-extension
+# the SMS provider WMI cache is briefly stale and the first call surfaces
+# "WqlQueryException: Not found" even though the site is healthy. Restarting
+# SMS_Executive on the site server clears it, but that's not available inside
+# a plugin call. Retry with backoff instead.
+$maxAttempts = 12
+$attempt = 0
+$osImage = $null
+while ($attempt -lt $maxAttempts) {
+    $attempt++
+    try {
+        $osImage = New-CMOperatingSystemImage -Name $module.Params.name -Path $module.Params.path -ErrorAction Stop
+        break
+    } catch [Microsoft.ConfigurationManagement.ManagementProvider.WqlQueryEngine.WqlQueryException] {
+        if ($_.Exception.Message -match 'Not found' -and $attempt -lt $maxAttempts) {
+            Start-Sleep -Seconds 15
+            continue
+        }
+        throw
+    }
+}
+
+if (-not $osImage) {
+    $module.FailJson("New-CMOperatingSystemImage did not return an object after $maxAttempts attempts")
+}
+
+$DP = Get-CMDistributionPoint
+$DP_FQDN = $DP.NetworkOSPath -replace "\\", ""
+
+Start-CMContentDistribution -BootImageName "Boot image (x64)" -DistributionPointName $DP_FQDN
+Start-CMContentDistribution -OperatingSystemImageName $module.Params.name -DistributionPointName $DP_FQDN
+
+$module.ExitJson()

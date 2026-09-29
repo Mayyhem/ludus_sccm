@@ -62,3 +62,19 @@
 - name: Reboot after ADCS Installation
   ansible.windows.win_reboot:
   when: adcs_feature.changed or (adcs_install.changed | default(false))
+
+# Configure the Web Enrollment role service so /certsrv/ actually
+# responds. Install-AdcsCertificationAuthority stands up the CA itself
+# but does not touch the IIS side; without this task the READMEs claim
+# of TAKEOVER-3 / ESC8 vulnerability isn't real (the endpoint 404s).
+# The AD-Certificate feature with include_sub_features: true above
+# already ships the binaries, so this is just the configuration step.
+- name: Configure AD CS Web Enrollment (enables ESC8 / TAKEOVER-3 surface)
+  ansible.windows.win_powershell:
+    script: |
+      try {
+        Install-AdcsWebEnrollment -Force -ErrorAction Stop
+        $Ansible.Changed = $true
+      } catch {
+        $Ansible.Changed = $false
+      }

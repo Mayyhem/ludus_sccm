@@ -4,6 +4,10 @@ ludus_sccm_host_path: "C:\\ludus\\sccm"
 ludus_sccm_sql_svc_account_username: 'sccmsqlsvc'
 ludus_sccm_sql_svc_account_password: 'Password123'
 ludus_iso_path: "/var/lib/vz/template/iso"
+# Win11 install ISO used by config_pxe.yaml to build the SCCM boot image.
+# Ludus stages this exact filename in the Proxmox ISO store. Override to
+# point at whatever Win11 ISO your controller has staged.
+ludus_sccm_pxe_iso_filename: "22621.525.220925-0207.ni_release_svc_refresh_CLIENTENTERPRISEEVAL_OEMRET_x64FRE_en-us.iso"
 #--------------------------Network Access Account--------------------------------
 ludus_sccm_configure_naa: true
 ludus_sccm_naa_username: 'networkaccess'

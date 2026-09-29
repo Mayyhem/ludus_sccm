@@ -15,34 +15,46 @@ Import-Module ActiveDirectory
 
 $domainInfo = Get-ADDomain
 
-# Define the search base where servers are located (e.g., an Organizational Unit)
-$serversOU = "OU=servers,"+ $domainInfo.DistinguishedName
-$workstationsOU = "OU=Workstations,"+ $domainInfo.DistinguishedName 
+# Define the search base where servers/workstations live. These are the
+# conventional Ludus OU paths; if the caller of this collection is not
+# running under Ludus and those OUs don't exist yet, gracefully skip
+# rather than crashing with "Directory object not found".
+$serversOU = "OU=servers," + $domainInfo.DistinguishedName
+$workstationsOU = "OU=Workstations," + $domainInfo.DistinguishedName
 
-# Get all servers within the specified search base
-$servers = Get-ADComputer -Filter * -SearchBase $serversOU
-$workstations = Get-ADComputer -Filter * -SearchBase $workstationsOU
+function Get-ComputersInOU {
+    param([string]$SearchBase)
+    try {
+        Get-ADComputer -Filter * -SearchBase $SearchBase -ErrorAction Stop
+    } catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
+        # OU doesn't exist — return empty so the loop below is a no-op.
+        @()
+    } catch {
+        # Any other AD error is worth surfacing.
+        throw
+    }
+}
 
-# Get all domain controllers
+$servers = Get-ComputersInOU -SearchBase $serversOU
+$workstations = Get-ComputersInOU -SearchBase $workstationsOU
 $domainControllers = Get-ADDomainController -Filter *
 
-#Force gpupdate
-if($module.Params.workstations){
+if ($module.Params.workstations) {
     foreach ($workstation in $workstations) {
-        Invoke-GPUpdate -Computer $workstation.Name -Force -RandomDelayInMinutes 0 
-    } 
+        Invoke-GPUpdate -Computer $workstation.Name -Force -RandomDelayInMinutes 0
+    }
 }
 
-if($module.Params.servers){
+if ($module.Params.servers) {
     foreach ($server in $servers) {
-        Invoke-GPUpdate -Computer $server.Name -Force -RandomDelayInMinutes 0 
-    } 
+        Invoke-GPUpdate -Computer $server.Name -Force -RandomDelayInMinutes 0
+    }
 }
 
-if($module.Params.domain_controllers){
+if ($module.Params.domain_controllers) {
     foreach ($domainController in $domainControllers) {
-        Invoke-GPUpdate -Computer $domainController.Name -Force -RandomDelayInMinutes 0 
-    } 
+        Invoke-GPUpdate -Computer $domainController.Name -Force -RandomDelayInMinutes 0
+    }
 }
 
 $module.ExitJson()
