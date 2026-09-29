@@ -201,6 +201,6 @@
   register: pivot_result
   changed_when: false
 
-- name: Show pivot verification result (expect: target hostname, 1)
+- name: "Show pivot verification result (expect: target hostname, 1)"
   ansible.builtin.debug:
     var: pivot_result.stdout_lines
