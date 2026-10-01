@@ -1,0 +1,206 @@
+---
+# takeover_9_setup — stand up a third-party SQL Server instance with a
+# linked server pointing at an SCCM site database and stored SA
+# credentials. Reproduces the TAKEOVER-9 misconfiguration from the
+# Misconfiguration Manager project so it can be tested in a lab.
+#
+# This is a deliberate misconfiguration. Do NOT run this role in an
+# environment where an attacker could reach the third-party host.
+#
+# Role scope: runs on the "third-party" host (not part of the SCCM
+# hierarchy). Delegates to the target site database VM for the Mixed
+# Mode registry write, service restart, and SQL login creation. The
+# target VM name is set by ludus_sccm_takeover9_target_vm_name and
+# must match the Ansible inventory hostname of the SCCM site DB VM.
+
+- name: Check if MSSQL is already installed on this host
+  ansible.windows.win_service_info:
+    name: MSSQLSERVER
+  register: mssql_status
+  failed_when: false
+
+# ── SQL Server install on the third-party host ─────────────────────────
+- name: Install SQL Server on this host
+  when: mssql_status.services | default([]) | length == 0
+  block:
+    - name: Get SQL Server 2022 installation ISO
+      ansible.builtin.include_tasks:
+        file: ../../install_site_database/tasks/download_file.yml
+      vars:
+        ludus_sccm_file_name: SQLServer2022-x64-ENU.iso
+        ludus_sccm_url: "{{ ludus_sccm_sql2022_url }}"
+
+    - name: Mount MSSQL Server ISO
+      community.windows.win_disk_image:
+        image_path: "{{ ludus_sccm_host_path }}\\SQLServer2022-x64-ENU.iso"
+        state: present
+      register: disk_image_out
+
+    - name: Install SQL Server 2022 (SQL feature only, SYSTEM service acct)
+      ansible.windows.win_shell: |
+        {{ disk_image_out.mount_paths[0] }}setup.exe /Q /IAcceptSQLServerLicenseTerms /PID="22222-00000-00000-00000-00000" /ACTION=Install /FEATURES=SQL /INSTANCENAME=MSSQLSERVER /TCPENABLED=1 /SQLSVCACCOUNT="NT AUTHORITY\SYSTEM" /SQLSYSADMINACCOUNTS="{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}" /SQLMINMEMORY=512 /SQLMAXMEMORY=2048
+      args:
+        creates: 'C:\Program Files\Microsoft SQL Server\MSSQL16.MSSQLSERVER\MSSQL\Binn\sqlservr.exe'
+      vars:
+        ansible_become: true
+        ansible_become_method: runas
+        ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
+        ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+        ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+    - name: Unmount SQL Server ISO
+      community.windows.win_disk_image:
+        image_path: "{{ ludus_sccm_host_path }}\\SQLServer2022-x64-ENU.iso"
+        state: absent
+
+    - name: Ensure MSSQLSERVER is running with auto start
+      ansible.windows.win_service:
+        name: MSSQLSERVER
+        state: started
+        start_mode: auto
+
+- name: Assert MSOLEDBSQL provider is registered
+  # SQL Server 2022's install ships "Microsoft OLE DB Driver for SQL
+  # Server" as a client-side component. Older installs may need a
+  # separate MSI (https://learn.microsoft.com/en-us/sql/connect/oledb).
+  ansible.windows.win_shell: |
+    $p = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' 2>$null |
+         Where-Object { $_.DisplayName -like 'Microsoft OLE DB Driver for SQL Server*' } |
+         Select-Object -First 1
+    if (-not $p) { throw 'MSOLEDBSQL not found on this host — install it before creating a linked server with the MSOLEDBSQL provider.' }
+    Write-Output ("{0} {1}" -f $p.DisplayName, $p.DisplayVersion)
+  changed_when: false
+
+# ── Target site DB side: Mixed Mode + SA-privileged SQL login ──────────
+- name: Enable Mixed Mode authentication on the target site database
+  # Windows-only auth is the SCCM default; stored SQL credentials in a
+  # linked server require SQL authentication to be enabled on the
+  # target. Registry key is instance-specific (versioned).
+  delegate_to: "{{ ludus_sccm_takeover9_target_vm_name }}"
+  block:
+    - name: Read current LoginMode on target
+      ansible.windows.win_reg_stat:
+        path: "{{ ludus_sccm_takeover9_sql_regpath }}"
+        name: LoginMode
+      register: loginmode_before
+
+    - name: Set LoginMode = 2 (Mixed Mode) on target
+      ansible.windows.win_regedit:
+        path: "{{ ludus_sccm_takeover9_sql_regpath }}"
+        name: LoginMode
+        data: 2
+        type: dword
+
+    - name: Restart target MSSQLSERVER only if LoginMode actually changed
+      ansible.windows.win_service:
+        name: MSSQLSERVER
+        state: restarted
+      when: (loginmode_before.value | default(-1)) != 2
+
+    - name: Wait for target MSSQLSERVER to accept connections again
+      ansible.windows.win_wait_for:
+        host: 127.0.0.1
+        port: 1433
+        timeout: 60
+
+- name: Create the SA-privileged SQL login on the target site database
+  delegate_to: "{{ ludus_sccm_takeover9_target_vm_name }}"
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = 'Stop'
+    $login = '{{ ludus_sccm_takeover9_sql_login }}'
+    $pw    = '{{ ludus_sccm_takeover9_sql_password }}'
+    $sql = @"
+    IF NOT EXISTS (SELECT 1 FROM sys.sql_logins WHERE name = '$login')
+      BEGIN
+        CREATE LOGIN [$login] WITH PASSWORD = '$pw', CHECK_POLICY = OFF;
+      END
+    ELSE
+      BEGIN
+        ALTER LOGIN [$login] WITH PASSWORD = '$pw';
+      END
+    IF IS_SRVROLEMEMBER('sysadmin', '$login') = 0
+      BEGIN
+        EXEC sp_addsrvrolemember @loginame = '$login', @rolename = 'sysadmin';
+      END
+    SELECT IS_SRVROLEMEMBER('sysadmin', '$login') AS is_sa;
+    "@
+    sqlcmd -E -h -1 -W -Q "$sql"
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+  register: sa_grant
+
+- name: Show sysadmin membership check (should print 1)
+  ansible.builtin.debug:
+    var: sa_grant.stdout_lines
+
+# ── Third-party host side: linked server with fixed SA credentials ────
+- name: Configure the SA-linked linked server on this host
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = 'Stop'
+    $link = '{{ ludus_sccm_takeover9_link_name }}'
+    $rmt  = '{{ ludus_sccm_takeover9_target_fqdn }}'
+    $rmt_user = '{{ ludus_sccm_takeover9_sql_login }}'
+    $rmt_pass = '{{ ludus_sccm_takeover9_sql_password }}'
+
+    $sql = @"
+    IF NOT EXISTS (SELECT 1 FROM sys.servers WHERE name = '$link')
+      BEGIN
+        EXEC sp_addlinkedserver
+          @server = '$link',
+          @srvproduct = '',
+          @provider = 'MSOLEDBSQL',
+          @datasrc = '$rmt';
+      END
+
+    -- Idempotency: drop any existing default-login mapping before adding ours.
+    IF EXISTS (SELECT 1 FROM sys.linked_logins ll
+               JOIN sys.servers s ON s.server_id = ll.server_id
+               WHERE s.name = '$link' AND ll.local_principal_id = 0)
+      BEGIN
+        EXEC sp_droplinkedsrvlogin @rmtsrvname = '$link', @locallogin = NULL;
+      END
+
+    EXEC sp_addlinkedsrvlogin
+      @rmtsrvname = '$link',
+      @useself = 'FALSE',
+      @locallogin = NULL,
+      @rmtuser = '$rmt_user',
+      @rmtpassword = '$rmt_pass';
+
+    SELECT s.name, s.data_source, ll.remote_name, ll.uses_self_credential
+    FROM sys.servers s
+    LEFT JOIN sys.linked_logins ll ON ll.server_id = s.server_id
+    WHERE s.name = '$link';
+    "@
+    sqlcmd -E -h -1 -W -Q "$sql"
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+  register: link_result
+
+- name: Show linked server configuration
+  ansible.builtin.debug:
+    var: link_result.stdout_lines
+
+- name: Verify pivot works — run remote query via the linked server
+  ansible.windows.win_shell: |
+    sqlcmd -E -h -1 -W -Q "SELECT s.srv, s.sa FROM OPENQUERY([{{ ludus_sccm_takeover9_link_name }}], 'SELECT @@servername AS srv, IS_SRVROLEMEMBER(''sysadmin'') AS sa') AS s"
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+  register: pivot_result
+  changed_when: false
+
+- name: "Show pivot verification result (expect: target hostname, 1)"
+  ansible.builtin.debug:
+    var: pivot_result.stdout_lines
