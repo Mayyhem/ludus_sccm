@@ -10,6 +10,7 @@
 #   10.X.10.50: cas-pss
 #   10.X.10.51: cas-db
 #   10.X.10.57: cas-scp
+#   10.X.10.60: monitor
 #   10.X.10.100: dc
 
 # 10.X.11.0/24: Primary Site One (PS1)
@@ -57,6 +58,38 @@ ludus:
         depends_on:
           - vm_name: "{{ range_id }}-dc"
             role: mayyhem.ludus_sccm.windows_base
+
+  # Third-party SQL host for TAKEOVER-9
+  - vm_name: "{{ range_id }}-monitor"
+    hostname: "monitor"
+    template: win2022-server-x64-template
+    testing:
+      snapshot: true
+      block_internet: false
+    vlan: 10
+    ip_last_octet: 60
+    ram_gb: 4
+    ram_min_gb: 2
+    cpus: 2
+    windows:
+      sysprep: true
+    domain:
+      fqdn: mayyhem.com
+      role: member
+    roles:
+      - name: mayyhem.ludus_sccm.windows_base
+        depends_on:
+          - vm_name: "{{ range_id }}-dc"
+            role: mayyhem.ludus_sccm.windows_base
+      - name: mayyhem.ludus_sccm.takeover_9_setup
+        depends_on:
+          - vm_name: "{{ range_id }}-monitor"
+            role: mayyhem.ludus_sccm.windows_base
+          - vm_name: "{{ range_id }}-ps1-db"
+            role: mayyhem.ludus_sccm.install_site_database
+    role_vars:
+      ludus_sccm_takeover9_target_vm_name: "{{ range_id }}-ps1-db"
+      ludus_sccm_takeover9_target_fqdn: "ps1-db.mayyhem.com"
 
 #######################################
 ## Central Administration Site (CAS) ##
@@ -724,6 +757,11 @@ ludus:
       ludus_sccm_site_server_hostname: 'ps1-pss'
       ludus_sccm_is_primary_or_cas: false
       ludus_sccm_add_accounts_to_admins: "ps1-psv$"
+
+router:
+  vm_name: "{{ range_id }}-router-debian12-x64"
+  hostname: "{{ range_id }}-router"
+  template: debian-12-x64-server-template
 
 #notify:
 #  urls:
