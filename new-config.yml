@@ -426,6 +426,16 @@ ludus:
         depends_on:
           - vm_name: "{{ range_id }}-ps1-dp"
             role: mayyhem.ludus_sccm.windows_base
+      # Plant CRED-6 loot (opt-in): non-default share on the DP with a
+      # hardcoded service-account credential in a .ps1 file. Payoff
+      # account is local admin on ps1-dev only. Requires ps1-dev's
+      # windows_base to be done so the local-admin grant lands cleanly.
+      - name: mayyhem.ludus_sccm.create_dp_loot_share
+        depends_on:
+          - vm_name: "{{ range_id }}-ps1-dp"
+            role: mayyhem.ludus_sccm.prep_dp
+          - vm_name: "{{ range_id }}-ps1-dev"
+            role: mayyhem.ludus_sccm.windows_base
     role_vars:
       ludus_sccm_site_server_hostname: 'ps1-pss'
       ludus_sccm_add_accounts_to_admins: "ps1-psv$"

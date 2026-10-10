@@ -1,0 +1,16 @@
+galaxy_info:
+  role_name: create_dp_loot_share
+  namespace: mayyhem
+  author: chryzsh
+  description: >
+    Plant a non-default SMB share on the distribution point containing a
+    PowerShell utility with hardcoded credentials, making CRED-6 (loot creds
+    from SCCM Distribution Points and other site server shares) a productive
+    attack path in the lab.
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Windows
+      versions:
+        - "2022"
+dependencies: []

@@ -1,0 +1,51 @@
+---
+- name: "Create the service account {{ ludus_sccm_dp_loot_username }} in AD"
+  microsoft.ad.user:
+    name: '{{ ludus_sccm_dp_loot_username }}'
+    password: '{{ ludus_sccm_dp_loot_password }}'
+    password_never_expires: true
+    state: present
+    display_name: '{{ ludus_sccm_dp_loot_username }}'
+    description: '{{ ludus_sccm_dp_loot_user_description }}'
+  # Delegated to the DC so this role doesn't need RSAT ActiveDirectory on
+  # the distribution point.
+  delegate_to: "{{ ludus_dc_vm_name }}"
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+- name: "Grant {{ ludus_sccm_dp_loot_username }} local admin on {{ ludus_sccm_dp_loot_client_hostname }}"
+  ansible.windows.win_group_membership:
+    name: Administrators
+    members:
+      - '{{ ludus_domain_netbios_name }}\{{ ludus_sccm_dp_loot_username }}'
+    state: present
+  delegate_to: "{{ ludus_sccm_dp_loot_client_hostname }}"
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+- name: "Create share directory {{ ludus_sccm_dp_loot_share_path }} on the DP"
+  ansible.windows.win_file:
+    path: '{{ ludus_sccm_dp_loot_share_path }}'
+    state: directory
+
+- name: "Drop {{ ludus_sccm_dp_loot_filename }} with hardcoded credential"
+  ansible.windows.win_template:
+    src: Reset-SCCMClientCache.ps1.j2
+    dest: '{{ ludus_sccm_dp_loot_share_path }}\{{ ludus_sccm_dp_loot_filename }}'
+
+- name: "Expose {{ ludus_sccm_dp_loot_share_path }} as SMB share {{ ludus_sccm_dp_loot_share_name }} (domain-authenticated read)"
+  ansible.windows.win_share:
+    name: '{{ ludus_sccm_dp_loot_share_name }}'
+    path: '{{ ludus_sccm_dp_loot_share_path }}'
+    list: true
+    read: '{{ ludus_domain_netbios_name }}\Domain Users'
+    full: 'BUILTIN\Administrators'
+    state: present

@@ -1,0 +1,29 @@
+---
+# The AD account whose creds get planted in the loot file. Password is
+# safe to commit because it's a lab-only string. Note the trailing '!' to
+# differentiate from the collection's default `Password123` — a student
+# who copy-pastes carelessly will get an auth failure and know the plant
+# is precise.
+ludus_sccm_dp_loot_username: 'svc_sccm_maint'
+ludus_sccm_dp_loot_password: 'Password123!'
+# KEEP IN SYNC with exec2_grantee_description in
+# vsphere/ansible/misc_grant_svc_maint_script_approver.yml (EXEC-2
+# Proposal D). Both set this same account's AD description; if they
+# differ, whichever playbook runs last wins and clobbers the EXEC-2
+# recon breadcrumb. The "script deployment approver" wording is the
+# breadcrumb that ties CRED-6 to EXEC-2.
+ludus_sccm_dp_loot_user_description: 'SCCM script deployment approver — client-cache maintenance automation (IT-Ops, ticket IT-4419).'
+
+# Client host that receives local-admin membership for the planted
+# account. This is the CRED-6 payoff — student loots the cred from the
+# DP, then WinRM/RDPs into this host. Should be a CM-enrolled Windows
+# client whose NAA cache is worth extracting (chains into CRED-1/CRED-3).
+ludus_sccm_dp_loot_client_hostname: 'ps1-dev'
+
+# Share and file details. Share name should stand out against the RECON-2
+# SCCM baseline (SCCMContentLib$, SMS_DP$, SMSSIG$, etc.) while reading
+# as a plausible IT-Ops artifact — `Scripts` is the most common
+# non-default share on real SCCM site systems.
+ludus_sccm_dp_loot_share_name: 'Scripts'
+ludus_sccm_dp_loot_share_path: 'C:\Scripts'
+ludus_sccm_dp_loot_filename: 'Reset-SCCMClientCache.ps1'

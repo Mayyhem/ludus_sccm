@@ -1,0 +1,19 @@
+# Scheduled task: Reset-SCCMClientCache
+# Runs weekly on drift-prone dev machines. Owner: IT-Ops.
+#
+# TODO: move creds out of the script before rolling this to prod.
+#       (Ticket IT-4419)
+
+$ServiceAccount = "{{ ludus_domain_netbios_name }}\{{ ludus_sccm_dp_loot_username }}"
+$Password       = "{{ ludus_sccm_dp_loot_password }}"
+
+$Target = if ($args[0]) { $args[0] } else { "{{ ludus_sccm_dp_loot_client_hostname }}" }
+
+$SecPass = ConvertTo-SecureString -String $Password -AsPlainText -Force
+$Cred    = New-Object System.Management.Automation.PSCredential($ServiceAccount, $SecPass)
+
+Invoke-Command -ComputerName $Target -Credential $Cred -ScriptBlock {
+    Restart-Service -Name CcmExec -Force
+    Remove-Item -Path 'C:\Windows\ccmcache\*' -Recurse -Force -ErrorAction SilentlyContinue
+    Start-Service -Name CcmExec
+}
