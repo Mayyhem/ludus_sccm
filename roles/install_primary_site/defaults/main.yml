@@ -12,6 +12,14 @@ ludus_sccm_pxe_iso_filename: "22621.525.220925-0207.ni_release_svc_refresh_CLIEN
 ludus_sccm_configure_naa: true
 ludus_sccm_naa_username: 'networkaccess'
 ludus_sccm_naa_password: 'Password123'
+# EXEC-2 lab path: grant the NAA a custom "Script Approvers" role (Site: Read; SMS
+# Scripts: Read, Approve, Modify; no Run Script/Create/Delete) so credential access to
+# the NAA (CRED-1/CRED-3) leads to script-approval rights usable toward EXEC-2.
+# Execution requires a separate account (a Full Administrator obtained via TAKEOVER-1
+# or equivalent). Off by default; deliberate lab misconfiguration.
+ludus_sccm_naa_grant_script_approver: false
+ludus_sccm_script_approver_role_name: 'Script Approvers'
+ludus_sccm_script_approver_source_role: 'Read-only Analyst'
 #--------------------------Client Push Account-----------------------------------------
 ludus_sccm_configure_client_push: true
 ludus_sccm_client_push_username: 'sccm_push'

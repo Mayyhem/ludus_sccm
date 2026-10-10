@@ -662,6 +662,8 @@ ludus:
       ludus_sccm_secondary_sitecode: 'SEC'
       ludus_sccm_secondary_siteserver_fqdn: 'ps1-sec.mayyhem.com'
       ludus_sccm_install_stall_timeout_minutes: 30
+      # EXEC-2 lab path: grant the NAA the "Script Approvers" custom role
+      ludus_sccm_naa_grant_script_approver: true
 
   # PS1-DEV: Development Workstation
   - vm_name: "{{ range_id }}-ps1-dev"

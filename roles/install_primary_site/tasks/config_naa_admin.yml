@@ -1,0 +1,24 @@
+---
+- name: Create Script Approvers security role
+  mayyhem.ludus_sccm.create_script_approver_role:
+    name: '{{ ludus_sccm_script_approver_role_name }}'
+    source_role_name: '{{ ludus_sccm_script_approver_source_role }}'
+    site_code: '{{ ludus_sccm_sitecode }}'
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+- name: Grant Script Approvers role to the Network Access Account
+  mayyhem.ludus_sccm.add_administrative_user:
+    name: '{{ ludus_domain_netbios_name }}\{{ ludus_sccm_naa_username }}'
+    role_name: '{{ ludus_sccm_script_approver_role_name }}'
+    site_code: '{{ ludus_sccm_sitecode }}'
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
