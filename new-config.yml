@@ -705,6 +705,13 @@ ludus:
             role: mayyhem.ludus_sccm.windows_base
           - vm_name: "{{ range_id }}-ps1-pss"
             role: mayyhem.ludus_sccm.windows_base
+      # Create regular domain users with RDP access for hands-on demos
+      - name: mayyhem.ludus_sccm.create_demo_users
+        depends_on:
+          - vm_name: "{{ range_id }}-ps1-dev"
+            role: mayyhem.ludus_sccm.windows_base
+          - vm_name: "{{ range_id }}-dc"
+            role: mayyhem.ludus_sccm.windows_base
     role_vars:
       ludus_sccm_site_server_hostname: 'ps1-pss'
 

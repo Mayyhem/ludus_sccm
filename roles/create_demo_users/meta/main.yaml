@@ -1,0 +1,20 @@
+---
+dependencies: []
+
+galaxy_info:
+  role_name: create_demo_users
+  author: chryzsh
+  description: Create regular domain users with RDP access to a client, optionally with local admin, for hands-on demos
+  company: SpecterOps
+  license: GPLv3
+  min_ansible_version: "2.10"
+  platforms:
+    - name: Windows
+
+  galaxy_tags:
+    - windows
+    - security
+    - sccm
+    - activedirectory
+    - server
+    - ludus

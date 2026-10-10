@@ -1,0 +1,14 @@
+---
+# Domain accounts created for hands-on demos (e.g., RDPing into a client
+# as something other than the range-wide domain admin). Each entry is
+# created as a domain user and added to Remote Desktop Users; entries
+# with local_admin: true are also added to local Administrators —
+# useful for demoing a common real-world misconfiguration (a
+# helpdesk/support account with local admin on client machines).
+ludus_sccm_demo_users:
+  - username: domainuser
+    password: 'Password123'
+    local_admin: false
+  - username: helpdesk
+    password: 'Password123'
+    local_admin: true

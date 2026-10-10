@@ -1,0 +1,58 @@
+---
+- name: Create demo domain user accounts
+  microsoft.ad.user:
+    name: '{{ demo_user.username }}'
+    password: '{{ demo_user.password }}'
+    password_never_expires: true
+    state: present
+  # This delegation prevents us from having to install the ActiveDirectory PowerShell module on this host
+  delegate_to: "{{ ludus_dc_vm_name }}"
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+  loop: '{{ ludus_sccm_demo_users }}'
+  loop_control:
+    loop_var: demo_user
+
+- name: Enable Remote Desktop
+  ansible.windows.win_regedit:
+    path: 'HKLM:\System\CurrentControlSet\Control\Terminal Server'
+    name: fDenyTSConnections
+    data: 0
+    type: dword
+
+- name: Add demo users to Remote Desktop Users
+  ansible.windows.win_group_membership:
+    name: Remote Desktop Users
+    members:
+      - '{{ ludus_domain_netbios_name }}\{{ demo_user.username }}'
+    state: present
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+  loop: '{{ ludus_sccm_demo_users }}'
+  loop_control:
+    loop_var: demo_user
+
+- name: Add demo users to local Administrators
+  ansible.windows.win_group_membership:
+    name: Administrators
+    members:
+      - '{{ ludus_domain_netbios_name }}\{{ demo_user.username }}'
+    state: present
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+  loop: '{{ ludus_sccm_demo_users }}'
+  loop_control:
+    loop_var: demo_user
+  when: demo_user.local_admin | bool
