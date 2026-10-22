@@ -52,6 +52,26 @@ ludus:
     domain:
       fqdn: mayyhem.com
       role: primary-dc
+    # Change these two values once; every SCCM VM below inherits them.
+    role_vars: &sccm_version_settings
+      ludus_sccm_target_version: "latest"
+      ludus_sccm_install_hotfixes: true
+      # Also inspect consoles on lab machines that are not registered clients.
+      ludus_sccm_component_hosts:
+        - dc.mayyhem.com
+        - monitor.mayyhem.com
+        - cas-db.mayyhem.com
+        - cas-scp.mayyhem.com
+        - cas-pss.mayyhem.com
+        - ps1-db.mayyhem.com
+        - ps1-lib.mayyhem.com
+        - ps1-psv.mayyhem.com
+        - ps1-dp.mayyhem.com
+        - ps1-mp.mayyhem.com
+        - ps1-sms.mayyhem.com
+        - ps1-pss.mayyhem.com
+        - ps1-sec.mayyhem.com
+        - ps1-dev.mayyhem.com
     roles:
       - name: mayyhem.ludus_sccm.windows_base
       - name: mayyhem.ludus_sccm.install_adcs
@@ -88,6 +108,7 @@ ludus:
           - vm_name: "{{ range_id }}-ps1-db"
             role: mayyhem.ludus_sccm.install_site_database
     role_vars:
+      <<: *sccm_version_settings
       ludus_sccm_takeover9_target_vm_name: "{{ range_id }}-ps1-db"
       ludus_sccm_takeover9_target_fqdn: "ps1-db.mayyhem.com"
 
@@ -135,6 +156,7 @@ ludus:
           - vm_name: "{{ range_id }}-cas-db"
             role: mayyhem.ludus_sccm.add_pss_to_admins
     role_vars:
+      <<: *sccm_version_settings
       ludus_sccm_site_server_hostname: 'cas-pss'
       ludus_sccm_sql_server_hostname: 'cas-db'
       ludus_sccm_sql_additional_sysadmin_accounts: 'MAYYHEM\domainadmin'
@@ -173,6 +195,7 @@ ludus:
           - vm_name: "{{ range_id }}-cas-pss"
             role: mayyhem.ludus_sccm.windows_base
     role_vars:
+      <<: *sccm_version_settings
       ludus_sccm_site_server_hostname: 'cas-pss'
 
   # CAS-PSS: Primary Site Server
@@ -219,7 +242,19 @@ ludus:
             role: mayyhem.ludus_sccm.install_primary_site
           - vm_name: "{{ range_id }}-ps1-pss"
             role: mayyhem.ludus_sccm.add_accounts_to_admins
+      # One coordinator starts only after the hierarchy and remote roles exist.
+      - name: mayyhem.ludus_sccm.service_hierarchy
+        depends_on:
+          - vm_name: "{{ range_id }}-cas-pss"
+            role: mayyhem.ludus_sccm.install_primary_site
+          - vm_name: "{{ range_id }}-ps1-pss"
+            role: mayyhem.ludus_sccm.install_sms
+          - vm_name: "{{ range_id }}-ps1-pss"
+            role: mayyhem.ludus_sccm.install_passive_site_server
+          - vm_name: "{{ range_id }}-ps1-pss"
+            role: mayyhem.ludus_sccm.install_secondary_site
     role_vars:
+      <<: *sccm_version_settings
       ludus_sccm_sitecode: CAS
       ludus_sccm_sitename: Central Administration Site
       ludus_sccm_child_site_server_hostname: 'ps1-pss'
@@ -288,6 +323,7 @@ ludus:
           - vm_name: "{{ range_id }}-ps1-psv"
             role: mayyhem.ludus_sccm.windows_base
     role_vars:
+      <<: *sccm_version_settings
       ludus_sccm_site_server_hostname: 'ps1-pss'
       ludus_sccm_sql_server_hostname: 'ps1-db'
       # Add passive site server account as SQL sysadmin
@@ -337,6 +373,7 @@ ludus:
           - vm_name: "{{ range_id }}-ps1-lib"
             role: mayyhem.ludus_sccm.add_accounts_to_admins
     role_vars:
+      <<: *sccm_version_settings
       ludus_sccm_site_server_hostname: 'ps1-pss'
       ludus_sccm_add_accounts_to_admins: "ps1-psv$"
 
@@ -379,6 +416,7 @@ ludus:
           - vm_name: "{{ range_id }}-ps1-psv"
             role: mayyhem.ludus_sccm.windows_base
     role_vars:
+      <<: *sccm_version_settings
       ludus_sccm_is_primary_or_cas: false
       ludus_sccm_sitecode: PS1
       ludus_sccm_site_server_hostname: 'ps1-pss'
@@ -427,6 +465,7 @@ ludus:
           - vm_name: "{{ range_id }}-ps1-dp"
             role: mayyhem.ludus_sccm.windows_base
     role_vars:
+      <<: *sccm_version_settings
       ludus_sccm_site_server_hostname: 'ps1-pss'
       ludus_sccm_add_accounts_to_admins: "ps1-psv$"
 
@@ -474,6 +513,7 @@ ludus:
           - vm_name: "{{ range_id }}-ps1-mp"
             role: mayyhem.ludus_sccm.windows_base
     role_vars:
+      <<: *sccm_version_settings
       ludus_sccm_site_server_hostname: "ps1-pss" 
       ludus_sccm_add_accounts_to_admins: "ps1-psv$"
 
@@ -519,6 +559,7 @@ ludus:
           - vm_name: "{{ range_id }}-ps1-sms"
             role: mayyhem.ludus_sccm.windows_base
     role_vars:
+      <<: *sccm_version_settings
       ludus_sccm_site_server_hostname: 'ps1-pss'
       ludus_sccm_add_accounts_to_admins: "ps1-psv$"
 
@@ -642,6 +683,7 @@ ludus:
           - vm_name: "{{ range_id }}-ps1-sec"
             role: mayyhem.ludus_sccm.add_pss_to_admins
     role_vars:
+      <<: *sccm_version_settings
       # This is a child site of CAS
       ludus_sccm_parent_sitecode: 'CAS'
       ludus_sccm_parent_site_server_hostname: 'cas-pss'
@@ -706,6 +748,7 @@ ludus:
           - vm_name: "{{ range_id }}-ps1-pss"
             role: mayyhem.ludus_sccm.windows_base
     role_vars:
+      <<: *sccm_version_settings
       ludus_sccm_site_server_hostname: 'ps1-pss'
 
   # PS1-SEC: Secondary Site Server
@@ -753,6 +796,7 @@ ludus:
           - vm_name: "{{ range_id }}-ps1-sec"
             role: mayyhem.ludus_sccm.windows_base
     role_vars:
+      <<: *sccm_version_settings
       # This is a secondary child site of PS1
       ludus_sccm_site_server_hostname: 'ps1-pss'
       ludus_sccm_is_primary_or_cas: false

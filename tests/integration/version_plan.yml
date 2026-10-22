@@ -1,0 +1,33 @@
+---
+# Run with the built collection installed on a supported Linux controller:
+# ansible-playbook -i localhost, tests/integration/version_plan.yml
+# This playbook is offline and never contacts the SCCM lab.
+- name: Verify read-only SCCM version planning
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Plan the existing hierarchy without additional fixes
+      mayyhem.ludus_sccm.sccm_version_plan:
+        target_version: "2603"
+        install_hotfixes: false
+        current_site_versions:
+          CAS: "5.00.9128.1000"
+          PS1: "5.00.9128.1030"
+          SEC: "5.00.9128.1000"
+      register: version_result
+
+    - name: Verify the expected route and read-only result
+      ansible.builtin.assert:
+        that:
+          - not version_result.changed
+          - version_result.plan.target_version == '2603'
+          - version_result.plan.baseline_version is none
+          - version_result.plan.upgrade_versions == ['2509', '2603']
+          - not version_result.plan.install_hotfixes
+
+    - name: Exercise the role defaults and explicit version setting
+      ansible.builtin.include_role:
+        name: mayyhem.ludus_sccm.plan_sccm_version
+      vars:
+        ludus_sccm_target_version: "2509"

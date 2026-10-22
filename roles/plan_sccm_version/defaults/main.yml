@@ -1,0 +1,6 @@
+---
+ludus_sccm_target_version: "latest"
+ludus_sccm_install_hotfixes: true
+# Supply every site's observed version when planning an existing hierarchy.
+# An empty dictionary asks for a fresh-deployment plan; it never triggers setup.
+ludus_sccm_current_site_versions: {}

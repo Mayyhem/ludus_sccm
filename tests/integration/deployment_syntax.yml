@@ -1,0 +1,17 @@
+---
+# Parse the new role entry points without running any task or contacting a guest:
+# ansible-playbook -i localhost, tests/integration/deployment_syntax.yml --syntax-check
+- name: Check deployment role structure
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Parse common settings
+      ansible.builtin.import_role:
+        name: mayyhem.ludus_sccm.sccm_common
+    - name: Parse prerequisites
+      ansible.builtin.import_role:
+        name: mayyhem.ludus_sccm.prepare_sccm
+    - name: Parse hierarchy servicing
+      ansible.builtin.import_role:
+        name: mayyhem.ludus_sccm.service_hierarchy

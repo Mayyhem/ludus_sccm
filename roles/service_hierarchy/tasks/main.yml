@@ -1,0 +1,130 @@
+---
+- name: Load the shared deployment selection and helpers
+  ansible.builtin.include_role:
+    name: mayyhem.ludus_sccm.sccm_common
+    public: true
+
+- name: Explain servicing in check mode
+  ansible.builtin.debug:
+    msg: "Resolved {{ ludus_sccm_selected_plan.target_version }}. Hierarchy servicing and live verification are skipped in check mode."
+  when: ansible_check_mode
+
+- name: Service and verify the hierarchy from its top-level site server
+  when: not ansible_check_mode
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: logon_type=interactive logon_flags=with_profile
+  block:
+    - name: Copy the hierarchy servicing scripts
+      ansible.windows.win_copy:
+        src: "{{ item }}"
+        dest: '{{ ludus_sccm_work_directory }}\{{ item }}'
+      loop:
+        - Update-SccmRelease.ps1
+        - Update-SccmHotfixes.ps1
+        - Complete-SccmDeployment.ps1
+
+    - name: Read the actual installed site versions
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$Directory, [string]$Code)
+          Import-Module "$Directory\SccmDeployment.psm1" -Force
+          Set-SccmLog "$Directory\hierarchy-update.log"
+          $versions = @{}
+          foreach ($site in @(Get-SccmProviderData $env:COMPUTERNAME $Code 'SMS_Site')) {
+              $versions[[string]$site.SiteCode] = [string]$site.Version
+          }
+          if (-not $versions.Count) { Stop-SccmWork 'The provider returned no installed sites.' }
+          $Ansible.Changed = $false
+          $Ansible.Result = $versions
+        parameters:
+          Directory: "{{ ludus_sccm_work_directory }}"
+          Code: "{{ ludus_sccm_sitecode }}"
+      register: ludus_sccm_installed_sites
+
+    - name: Plan the remaining route using the target already selected for this deployment
+      mayyhem.ludus_sccm.sccm_version_plan:
+        target_version: "{{ ludus_sccm_selected_plan.target_version }}"
+        install_hotfixes: "{{ ludus_sccm_install_hotfixes }}"
+        current_site_versions: "{{ ludus_sccm_installed_sites.result }}"
+        allow_mixed_versions: true
+      register: ludus_sccm_remaining_plan
+
+    - name: Install each required release in order
+      ansible.builtin.include_tasks: release.yml
+      loop: "{{ ludus_sccm_remaining_plan.plan.upgrade_versions }}"
+      loop_control:
+        loop_var: sccm_release
+
+    # Even with no remaining release hop, finish interrupted secondary/passive
+    # work before applying fixes or declaring the deployment ready.
+    - name: Reconcile secondary and passive servers at the selected release
+      ansible.builtin.include_tasks: release.yml
+      vars:
+        sccm_release: "{{ ludus_sccm_selected_plan.target_version }}"
+      when: ludus_sccm_remaining_plan.plan.upgrade_versions | length == 0
+
+    - name: Apply applicable registered hotfixes for the selected release
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$Directory, [string]$Code, [bool]$AllowWarnings, [int]$Timeout, [int]$Settle)
+          $result = & "$Directory\Update-SccmHotfixes.ps1" -WorkDirectory $Directory -Provider $env:COMPUTERNAME -SiteCode $Code -AllowWarnings $AllowWarnings -TimeoutMinutes $Timeout -CatalogSettleSeconds $Settle
+          $Ansible.Changed = $result.Changed
+          $Ansible.Result = $result
+        parameters:
+          Directory: "{{ ludus_sccm_work_directory }}"
+          Code: "{{ ludus_sccm_sitecode }}"
+          AllowWarnings: "{{ ludus_sccm_allow_prerequisite_warnings | bool }}"
+          Timeout: "{{ ludus_sccm_update_timeout_minutes | int }}"
+          Settle: "{{ ludus_sccm_catalog_settle_seconds | int }}"
+      async: 172800
+      poll: 30
+      when: ludus_sccm_install_hotfixes | bool
+
+    - name: Explain the disabled additional hotfix policy
+      ansible.builtin.debug:
+        msg: Additional hotfix installation is disabled. Existing and bundled fixes remain installed.
+      when: not (ludus_sccm_install_hotfixes | bool)
+
+    - name: Update installed consoles and reachable clients and verify deployment completion
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$Directory, [string]$Code, [int]$Build, [int]$Timeout, [int]$ClientTimeout, [string[]]$AdditionalComputers)
+          $result = & "$Directory\Complete-SccmDeployment.ps1" -WorkDirectory $Directory -Provider $env:COMPUTERNAME -SiteCode $Code -TargetBuild $Build -TimeoutMinutes $Timeout -ClientTimeoutMinutes $ClientTimeout -AdditionalComputers $AdditionalComputers
+          $Ansible.Result = $result
+          $Ansible.Changed = $result.Changed
+        parameters:
+          Directory: "{{ ludus_sccm_work_directory }}"
+          Code: "{{ ludus_sccm_sitecode }}"
+          Build: "{{ ludus_sccm_selected_plan.target_site_build | int }}"
+          Timeout: "{{ ludus_sccm_update_timeout_minutes | int }}"
+          ClientTimeout: "{{ ludus_sccm_client_timeout_minutes | int }}"
+          AdditionalComputers: "{{ ludus_sccm_component_hosts }}"
+      async: 172800
+      poll: 30
+
+  always:
+    - name: Locate servicing logs and reports even after a failure
+      ansible.windows.win_find:
+        paths: "{{ ludus_sccm_work_directory }}"
+        patterns: ['*.log', '*.json']
+        recurse: false
+      register: ludus_sccm_evidence_files
+      ignore_errors: true
+
+    - name: Fetch servicing evidence to the Ludus controller
+      ansible.builtin.fetch:
+        src: "{{ item.path }}"
+        dest: "{{ ludus_sccm_artifacts_directory }}/{{ inventory_hostname }}/"
+        flat: true
+      loop: "{{ ludus_sccm_evidence_files.files | default([]) }}"
+      ignore_errors: true
+      vars:
+        ansible_become: false
+
+    - name: Explain where to find recovery material and any missing fetch output
+      ansible.builtin.debug:
+        msg: "Reports: {{ ludus_sccm_artifacts_directory }}/{{ inventory_hostname }}/. If fetching failed, read {{ ludus_sccm_work_directory }} on this server. SQL backups stay on their SQL hosts; CD.Latest copies stay in its recovery subdirectory."

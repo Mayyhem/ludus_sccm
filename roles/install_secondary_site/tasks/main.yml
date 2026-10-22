@@ -74,7 +74,7 @@
             $sites = Get-WmiObject -Namespace $ns -Class SMS_Site -ErrorAction Stop
             foreach ($s in ($sites | Where-Object { $_ })) {
               if (($s.ServerName -ieq $ServerName) -or ($s.ServerName -ieq $short)) {
-                if ($s.Type -eq 2) { $secondaryExists = $true; break }
+                if ($s.Type -eq 1) { $secondaryExists = $true; break }
               }
             }
           }
@@ -166,3 +166,5 @@
     ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+- name: Verify actual installation completion
+  ansible.builtin.include_tasks: verify.yml

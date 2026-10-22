@@ -1,0 +1,27 @@
+---
+- name: Load the shared readiness checks
+  ansible.builtin.include_role:
+    name: mayyhem.ludus_sccm.sccm_common
+    public: true
+
+- name: Wait for passive installation and post-installation to finish
+  ansible.windows.win_powershell:
+    script: |
+      param([string]$Directory, [string]$Code, [string]$Server)
+      Import-Module "$Directory\SccmDeployment.psm1" -Force
+      Set-SccmLog "$Directory\passive-readiness.log"
+      Wait-SccmPassiveReady -Provider $env:COMPUTERNAME -SiteCode $Code -Server $Server
+      $Ansible.Changed = $false
+    parameters:
+      Directory: "{{ ludus_sccm_work_directory }}"
+      Code: "{{ ludus_sccm_sitecode }}"
+      Server: "{{ ludus_sccm_passive_hostname }}.{{ ludus_domain_fqdn }}"
+  async: 14400
+  poll: 30
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: logon_type=interactive logon_flags=with_profile
+  when: not ansible_check_mode

@@ -1,0 +1,29 @@
+---
+# localhost facts are already used by this collection to share results between
+# Ludus roles. Do not mark this fact cacheable: latest is resolved each new run.
+- name: Resolve the deployment target once on the controller
+  mayyhem.ludus_sccm.sccm_version_plan:
+    target_version: "{{ ludus_sccm_target_version }}"
+    install_hotfixes: "{{ ludus_sccm_install_hotfixes }}"
+  register: ludus_sccm_resolved_version
+  when: hostvars['localhost'].ludus_sccm_deployment_selection is undefined
+
+- name: Share the resolved selection with subsequent roles
+  ansible.builtin.set_fact:
+    ludus_sccm_deployment_selection: "{{ ludus_sccm_resolved_version }}"
+  delegate_to: localhost
+  delegate_facts: true
+  when: hostvars['localhost'].ludus_sccm_deployment_selection is undefined
+
+- name: Refuse conflicting version settings within a deployment
+  ansible.builtin.assert:
+    that:
+      - hostvars['localhost'].ludus_sccm_deployment_selection.plan.requested_version == ludus_sccm_target_version
+      - hostvars['localhost'].ludus_sccm_deployment_selection.plan.install_hotfixes == ludus_sccm_install_hotfixes
+    fail_msg: All SCCM roles must use the same target version and hotfix switch. Use the shared settings in new-config.yml.
+
+- name: Use the deployment selection on this host
+  ansible.builtin.set_fact:
+    ludus_sccm_selected_plan: "{{ hostvars['localhost'].ludus_sccm_deployment_selection.plan }}"
+    ludus_sccm_selected_deployment: "{{ hostvars['localhost'].ludus_sccm_deployment_selection.deployment }}"
+    ludus_sccm_media_root: "{{ ludus_sccm_work_directory }}\\media\\{{ hostvars['localhost'].ludus_sccm_deployment_selection.deployment.baseline_version }}\\cd.retail.LN"

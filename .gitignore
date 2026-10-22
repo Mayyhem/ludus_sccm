@@ -2,3 +2,6 @@
 .vscode
 synzack*.tar.gz
 mayyhem*.tar.gz
+__pycache__/
+.ruff_cache/
+.tmp/

@@ -1,0 +1,11 @@
+---
+- name: Resolve one SCCM release plan without changing the lab
+  mayyhem.ludus_sccm.sccm_version_plan:
+    target_version: "{{ ludus_sccm_target_version }}"
+    install_hotfixes: "{{ ludus_sccm_install_hotfixes }}"
+    current_site_versions: "{{ ludus_sccm_current_site_versions }}"
+  register: ludus_sccm_version_plan_result
+
+- name: Report the selected release and required updates
+  ansible.builtin.debug:
+    var: ludus_sccm_version_plan_result.plan

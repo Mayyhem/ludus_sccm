@@ -1,0 +1,65 @@
+---
+- name: Load shared release settings and Windows helpers
+  ansible.builtin.include_role:
+    name: mayyhem.ludus_sccm.sccm_common
+    public: true
+
+- name: Download the known compatible ODBC driver
+  ansible.builtin.include_role:
+    name: mayyhem.ludus_sccm.sccm_common
+    tasks_from: download
+  vars:
+    sccm_download_url: "{{ ludus_sccm_selected_deployment.prerequisites.odbc_url }}"
+    sccm_download_filename: 'odbc-18.6.2.1.msi'
+
+- name: Download the supported Visual C++ runtime
+  ansible.builtin.include_role:
+    name: mayyhem.ludus_sccm.sccm_common
+    tasks_from: download
+  vars:
+    sccm_download_url: "{{ ludus_sccm_selected_deployment.prerequisites.vc_url }}"
+    sccm_download_filename: 'vc-2022-x64.exe'
+
+- name: Download supported ADK and Windows PE installers
+  ansible.builtin.include_role:
+    name: mayyhem.ludus_sccm.sccm_common
+    tasks_from: download
+  vars:
+    sccm_download_url: "{{ item.url }}"
+    sccm_download_filename: "{{ item.filename }}"
+  loop:
+    - url: "{{ ludus_sccm_selected_deployment.prerequisites.adk_url }}"
+      filename: 'adk-10.1.26100.9457.exe'
+    - url: "{{ ludus_sccm_selected_deployment.prerequisites.winpe_url }}"
+      filename: 'winpe-10.1.26100.exe'
+  when: ludus_sccm_prepare_adk | bool
+
+- name: Apply and verify prerequisite versions
+  ansible.windows.win_powershell:
+    script: |
+      param([string]$WorkDirectory, [bool]$PrepareAdk)
+      Import-Module "$WorkDirectory\SccmDeployment.psm1" -Force
+      Set-SccmLog -Path "$WorkDirectory\prerequisites.log"
+      $result = Install-SccmPrerequisites -WorkDirectory $WorkDirectory -PrepareAdk $PrepareAdk
+      $Ansible.Changed = $result.Changed
+      $Ansible.Result = $result
+    parameters:
+      WorkDirectory: "{{ ludus_sccm_work_directory }}"
+      PrepareAdk: "{{ ludus_sccm_prepare_adk | bool }}"
+  register: ludus_sccm_prerequisite_result
+  async: 14400
+  poll: 30
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: logon_type=interactive logon_flags=with_profile
+  when: not ansible_check_mode
+
+- name: Restart after prerequisite installation when needed
+  ansible.windows.win_reboot:
+    reboot_timeout: 900
+  when:
+    - not ansible_check_mode
+    - ludus_sccm_prerequisite_result.result.RebootRequired | default(false) | bool

@@ -1,0 +1,4 @@
+---
+ludus_sccm_catalog_settle_seconds: 120
+ludus_sccm_component_hosts: []
+ludus_sccm_artifacts_directory: "{{ ludus_install_directory }}/resources/sccm/reports/{{ range_id | default('manual') }}"

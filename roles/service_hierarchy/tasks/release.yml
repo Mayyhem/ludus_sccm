@@ -1,0 +1,17 @@
+---
+- name: "Service the hierarchy to SCCM {{ sccm_release }}"
+  ansible.windows.win_powershell:
+    script: |
+      param([string]$Directory, [string]$Code, [string]$Release, [int]$Build, [bool]$AllowWarnings, [int]$Timeout)
+      $result = & "$Directory\Update-SccmRelease.ps1" -WorkDirectory $Directory -Provider $env:COMPUTERNAME -SiteCode $Code -TargetRelease $Release -TargetBuild $Build -AllowWarnings $AllowWarnings -TimeoutMinutes $Timeout
+      $Ansible.Changed = $result.Changed
+      $Ansible.Result = $result
+    parameters:
+      Directory: "{{ ludus_sccm_work_directory }}"
+      Code: "{{ ludus_sccm_sitecode }}"
+      Release: "{{ sccm_release }}"
+      Build: "{{ ludus_sccm_selected_deployment.release_builds[sccm_release] | int }}"
+      AllowWarnings: "{{ ludus_sccm_allow_prerequisite_warnings | bool }}"
+      Timeout: "{{ ludus_sccm_update_timeout_minutes | int }}"
+  async: 86400
+  poll: 30

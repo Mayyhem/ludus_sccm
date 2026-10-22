@@ -1,5 +1,42 @@
 # Ludus SCCM Hierarchy Lab
 
+## Choose the SCCM release
+
+The [full upgrade plan](UPGRADE_PLAN.md) covers selectable SCCM releases,
+automatic selection of the newest broadly available release, an additional
+hotfix switch, and complete hierarchy/client verification.
+
+The deployment roles now accept a release selection and an additional hotfix
+switch. Edit these shared values on the first VM in `new-config.yml`; the other
+VMs inherit them through its YAML anchor:
+
+```yaml
+ludus_sccm_target_version: "latest"  # Or "2403", "2409", "2503", "2509", "2603"
+ludus_sccm_install_hotfixes: true
+```
+
+`latest` discovers Microsoft's newest globally available current-branch release
+and excludes early releases. An explicit release stops there. False skips
+additional hotfixes and never removes existing or bundled fixes. New releases
+with unreviewed requirements stop clearly until support is added. An existing
+site is serviced through supported updates; selecting an older release requires
+a fresh lab.
+
+The final role updates the hierarchy, applicable registered fixes, installed
+consoles and reachable installed clients, then verifies readiness and distributed
+boot images. It writes `C:\ludus\sccm\deployment-report.json` on CAS-PSS and
+fetches logs/reports to `/opt/ludus/resources/sccm/reports/<range_id>/`.
+
+**Ready for host testing:** the code is connected, and local offline checks pass.
+Linux Ansible checks and live deployment have not run. Build this source rather
+than installing the published Galaxy collection to test these unmerged changes.
+Use the [Ludus-host agent handoff](docs/LUDUS_HOST_HANDOFF.md) for exact build,
+installation, test, recovery, and failure-investigation instructions.
+
+See [version selection and testing](docs/version-selection.md) for copyable
+mayyhem.com examples, the optional Ansible role, planning choices, test evidence,
+and validation limits. Keep its component-host list current if you rename VMs.
+
 This project builds on Zach Stein's ([@synzack21](https://x.com/synzack21)) and [Erik Hunstad](https://github.com/kernel-sanders)'s excellent [Ludus](https://ludus.cloud) SCCM project (https://github.com/Synzack/ludus_sccm) to expand the standalone primary site (`PS1`) to a parent central administration site (`CAS`) and child secondary site (`SEC`), resulting in a three-tiered SCCM hierarchy.
 
 ## Ludus
@@ -86,12 +123,18 @@ cd ludus_sccm
 ansible-galaxy collection build --force
 ```
 
-Next, copy the resulting file to the Ludus host, stand up an HTTP server, and add the collection:
+Build on the Ludus host, serve the artifact in one terminal, and install it in
+another terminal on that host. Use `--force` because this working copy retains
+collection version 1.0.6:
 
 ```
-scp Mayyhem-ludus_sccm-1.0.0.tar.gz <username>@<ludus_host>:/<path>
-python3 -m http.server 80
-ludus ansible collection add http://<network ip>/Mayyhem-ludus_sccm-1.0.0.tar.gz
+# First terminal, from the repository containing the built archive:
+python3 -m http.server 8000 --bind 127.0.0.1
+# Second terminal on the Ludus host:
+ludus ansible collection add --force http://127.0.0.1:8000/mayyhem-ludus_sccm-1.0.6.tar.gz
+ludus range config set -f new-config.yml
+# Start this only in the range chosen for your deployment test:
+ludus range deploy
 ```
 
 ## Troubleshooting

@@ -1,0 +1,8 @@
+---
+dependencies: []
+galaxy_info:
+  role_name: plan_sccm_version
+  author: Chris Thompson
+  description: Read-only SCCM release selection and upgrade planning
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.10"

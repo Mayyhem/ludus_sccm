@@ -30,84 +30,30 @@
       - Web-Mgmt-Service
     state: present
 
-- name: Get adksetup.exe
-  ansible.builtin.include_tasks:
-    file: download_file.yml
+- name: Prepare supported SCCM prerequisites
+  ansible.builtin.include_role:
+    name: mayyhem.ludus_sccm.prepare_sccm
+    public: true
   vars:
-    ludus_sccm_file_name: adksetup.exe
-    ludus_sccm_url: "{{ adksetup_url }}"
-    ludus_sccm_host_path: "C:\\ludus\\sccm"
+    ludus_sccm_prepare_adk: true
 
-- name: Get adkwinpesetup.exe
-  ansible.builtin.include_tasks:
-    file: download_file.yml
-  vars:
-    ludus_sccm_file_name: adkwinpesetup.exe
-    ludus_sccm_url: "{{ adkwinpesetup_url }}"
-    ludus_sccm_host_path: "C:\\ludus\\sccm"
+- name: Prepare selected installation media
+  ansible.builtin.include_tasks: media.yml
+  when: ludus_sccm_is_primary_or_cas | default(true) | bool
 
-- name: Install adksetup.exe
-  ansible.windows.win_command: 'C:\ludus\sccm\adksetup.exe /quiet /ceip off /features OptionId.DeploymentTools OptionId.UserStateMigrationTool'
-  args:
-    creates: "C:\\Program Files (x86)\\Windows Kits\\10\\Assessment and Deployment Kit\\User State Migration Tool\\amd64\\cmi2migxml.dll"
-  vars:
-    ansible_become: true
-    ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
-    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
-    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
-
-- name: Install adkwinpesetup
-  ansible.windows.win_command: 'C:\ludus\sccm\adkwinpesetup.exe /quiet /ceip off /features OptionId.WindowsPreinstallationEnvironment'
-  args:
-    creates: "C:\\Program Files (x86)\\Windows Kits\\10\\Assessment and Deployment Kit\\Windows Preinstallation Environment\\MakeWinPEMedia.cmd"
-  vars:
-    ansible_become: true
-    ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
-    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
-    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
-
-- name: Get Configmgr_2023
-  ansible.builtin.include_tasks:
-    file: download_file.yml
-  vars:
-    ludus_sccm_file_name: MCM_Configmgr_2303.exe
-    ludus_sccm_url: "{{ configmgr_url }}"
-    ludus_sccm_host_path: "C:\\ludus\\sccm"
-  when: ludus_sccm_is_primary_or_cas | default(true)
-
-- name: Unzip Setup
-  ansible.windows.win_command: 'C:\ludus\sccm\MCM_Configmgr_2303.exe /s -dC:\ludus\sccm'
-  args:
-    creates: C:\ludus\sccm\cd.retail.LN
-  vars:
-    ansible_become: true
-    ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
-    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
-    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
-  when: ludus_sccm_is_primary_or_cas | default(true)
-
-- name: Template ConfigMgrSetup.ini
+- name: Write the selected setup configuration
   ansible.windows.win_template:
     src: "{{ ludus_sccm_win_sccm_config_default_template }}"
-    dest: "C:\\ludus\\sccm\\ConfigMgrSetup.ini"
-  when: ludus_sccm_is_primary_or_cas | default(true)
+    dest: 'C:\ludus\sccm\ConfigMgrSetup.ini'
+  when: ludus_sccm_is_primary_or_cas | default(true) | bool
 
-- name: Template SystemManagement.ps1
+- name: Write the directory preparation script
   ansible.windows.win_template:
     src: "{{ ludus_sccm_system_management_template }}"
-    dest: "C:\\ludus\\sccm\\SystemManagement.ps1"
-  when: ludus_sccm_is_primary_or_cas | default(true)
+    dest: 'C:\ludus\sccm\SystemManagement.ps1'
+  when: ludus_sccm_is_primary_or_cas | default(true) | bool
 
-- name: Create SCCM pre-req folder
+- name: Create the SCCM prerequisite download directory
   ansible.windows.win_file:
     path: "{{ ludus_sccm_win_sccm_config_default_prereq_path }}"
     state: directory
-  when: ludus_sccm_is_primary_or_cas | default(true)
-
-# Pin ODBC Driver 18 to version 18.5.2 to avoid setup issues with the site database on 18.6.1 and later
-- name: Pin ODBC Driver 18 to version 18.5.2
-  ansible.builtin.include_tasks:
-    file: pin_odbc.yml

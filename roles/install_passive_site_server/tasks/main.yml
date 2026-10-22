@@ -285,12 +285,12 @@
 
       # Idempotency: Check if passive site role already exists on this server
       try {
-        $ns = "root\\SMS\\site_$SiteCode"
-        $shortName = ($SiteSystemName -split '\\.')[0]
+        $ns = "root\SMS\site_$SiteCode"
+        $shortName = ($SiteSystemName -split '\.')[0]
         $roles = Get-WmiObject -Namespace $ns -Class SMS_SCI_SysResUse -ErrorAction SilentlyContinue
         if ($roles) {
           $existingPassive = $roles | Where-Object {
-            ($_.RoleName -match '(?i)passive') -and (
+            ($_.RoleName -eq 'SMS Site Server') -and (
               ($_.NALPath -match [regex]::Escape($SiteSystemName)) -or
               ($shortName -and ($_.NALPath -match [regex]::Escape($shortName)))
             )
@@ -376,3 +376,5 @@
     ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+- name: Verify actual installation completion
+  ansible.builtin.include_tasks: verify.yml

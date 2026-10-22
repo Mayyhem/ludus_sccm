@@ -1,4 +1,9 @@
 ---
+- name: Load the deployment selection and helpers
+  ansible.builtin.include_role:
+    name: mayyhem.ludus_sccm.sccm_common
+    public: true
+
 - name: Check that defined hostnames are <= 15 characters
   ansible.builtin.fail:
     msg: "{{ sccm_vm_hostname }} is longer than 15 characters. Due to requirements of SCCM this is not allowed."
@@ -26,7 +31,7 @@
 
 - name: Extend Schema
   ansible.windows.win_shell: |
-   C:\ludus\sccm\cd.retail.LN\SMSSETUP\BIN\X64\extadsch.exe
+   {{ ludus_sccm_media_root }}\SMSSETUP\BIN\X64\extadsch.exe
   vars:
     ansible_become: true
     ansible_become_method: runas
@@ -35,24 +40,20 @@
     ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
 
 # Start SCCM Install-------------------------------------------------------------------
-- name: Check if SCCM is already installed
-  ansible.windows.win_service_info:
-    name: SMS_EXECUTIVE
-  register: sccm_service
+- name: Check for an installed site even when its service is stopped
+  ansible.windows.win_reg_stat:
+    path: HKLM:\SOFTWARE\Microsoft\SMS\Setup
+    name: Full Version
+  register: ludus_sccm_installed_site
 
 - name: Skip installation if SCCM is already installed
   debug:
-    msg: "SMS_EXECUTIVE service is running - SCCM already installed, skipping installation"
-  when: 
-    - sccm_service.services | default([]) | length > 0
-    - sccm_service.services[0].state in ['running', 'started']
+    msg: "An SCCM site already exists. Fresh setup and its uninstall/retry path are skipped; the final hierarchy role handles servicing."
+  when: ludus_sccm_installed_site.exists
 
-- name: Set skip flag when SCCM service is running
+- name: Keep existing sites out of fresh installation recovery
   set_fact:
-    skip_installation: true
-  when:
-    - sccm_service.services | default([]) | length > 0
-    - sccm_service.services[0].state in ['running', 'started']
+    skip_installation: "{{ ludus_sccm_installed_site.exists }}"
 
 - name: Reboot the site server before installation to ensure clean state (avoid 'Failed to create process of SetupWpf.exe' errors)
   ansible.windows.win_reboot:

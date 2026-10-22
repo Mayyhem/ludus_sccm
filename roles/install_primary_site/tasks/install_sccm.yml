@@ -128,7 +128,7 @@
                           $prereqContent = Get-Content $prereqLog -Raw -ErrorAction Stop
                           if ($prereqContent -match "ERROR: Site server has already been installed on this machine") {
                               Write-Output "DUPLICATE INSTALLATION DETECTED - Running deinstall"
-                              Start-Process -FilePath "C:\ludus\sccm\cd.retail.LN\SMSSETUP\BIN\X64\setup.exe" -ArgumentList "/DEINSTALL" -NoNewWindow -Wait
+                              Start-Process -FilePath "{{ ludus_sccm_media_root }}\SMSSETUP\BIN\X64\setup.exe" -ArgumentList "/DEINSTALL" -NoNewWindow -Wait
                               Write-Output "Deinstall completed"
                           }
                       } catch {
@@ -226,7 +226,7 @@
                               Write-Output "DUPLICATE INSTALLATION DETECTED - Running deinstall"
                               Stop-Process -Id $setupProcess.Id -Force
                               Start-Sleep -Seconds 2
-                              Start-Process -FilePath "C:\ludus\sccm\cd.retail.LN\SMSSETUP\BIN\X64\setup.exe" -ArgumentList "/DEINSTALL" -NoNewWindow -Wait
+                              Start-Process -FilePath "{{ ludus_sccm_media_root }}\SMSSETUP\BIN\X64\setup.exe" -ArgumentList "/DEINSTALL" -NoNewWindow -Wait
                               Write-Output "Deinstall completed"
                           } else {
                               Write-Output "Terminating stalled setup process"
@@ -275,7 +275,7 @@
 
 - name: Ensure scheduled task exists for SCCM install (attempt {{ attempt_number }})
   ansible.windows.win_shell: |
-    schtasks.exe /Create /TN 'SCCM-Setup-Install' /TR 'C:\ludus\sccm\cd.retail.LN\SMSSETUP\BIN\X64\setupwpf.exe /SCRIPT C:\ludus\sccm\ConfigMgrSetup.ini' /SC ONCE /ST 00:00 /RL HIGHEST /RU '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}' /RP '{{ defaults.ad_domain_admin_password }}' /F
+    schtasks.exe /Create /TN 'SCCM-Setup-Install' /TR '{{ ludus_sccm_media_root }}\SMSSETUP\BIN\X64\setupwpf.exe /SCRIPT C:\ludus\sccm\ConfigMgrSetup.ini' /SC ONCE /ST 00:00 /RL HIGHEST /RU '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}' /RP '{{ defaults.ad_domain_admin_password }}' /F
   changed_when: true
 
 - name: Start SCCM install scheduled task (attempt {{ attempt_number }})

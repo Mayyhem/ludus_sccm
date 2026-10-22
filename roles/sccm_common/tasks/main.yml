@@ -1,0 +1,13 @@
+---
+- name: Resolve and share the requested release
+  ansible.builtin.import_tasks: resolve.yml
+
+- name: Create the SCCM work directory
+  ansible.windows.win_file:
+    path: "{{ ludus_sccm_work_directory }}"
+    state: directory
+
+- name: Install the shared deployment helper
+  ansible.windows.win_copy:
+    src: SccmDeployment.psm1
+    dest: "{{ ludus_sccm_work_directory }}\\SccmDeployment.psm1"

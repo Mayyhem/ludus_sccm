@@ -1,0 +1,13 @@
+---
+ludus_install_directory: /opt/ludus
+ludus_sccm_target_version: "latest"
+ludus_sccm_install_hotfixes: true
+ludus_sccm_work_directory: 'C:\ludus\sccm'
+# Optional overrides must point at media for the selected baseline. Setup's
+# embedded build and Microsoft signature are checked before anything runs.
+ludus_sccm_media_url: ""
+ludus_sccm_media_checksum: ""
+ludus_sccm_poll_seconds: 30
+ludus_sccm_update_timeout_minutes: 180
+ludus_sccm_client_timeout_minutes: 90
+ludus_sccm_allow_prerequisite_warnings: false

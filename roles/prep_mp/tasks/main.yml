@@ -13,3 +13,7 @@
       - Web-Metabase
       - Web-WMI
     state: present
+- name: Prepare the management point SQL driver
+  ansible.builtin.include_role:
+    name: mayyhem.ludus_sccm.prepare_sccm
+    public: true

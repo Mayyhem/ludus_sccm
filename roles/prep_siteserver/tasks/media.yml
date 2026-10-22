@@ -1,0 +1,48 @@
+---
+- name: Download the selected baseline into a versioned cache
+  ansible.builtin.include_role:
+    name: mayyhem.ludus_sccm.sccm_common
+    tasks_from: download
+    public: true
+  vars:
+    sccm_download_url: "{{ ludus_sccm_media_url | default(ludus_sccm_selected_deployment.media_url, true) }}"
+    sccm_download_filename: "{{ ludus_sccm_selected_deployment.media_filename }}"
+    sccm_download_checksum: "{{ ludus_sccm_media_checksum }}"
+
+- name: Extract and verify baseline media before using setup
+  ansible.windows.win_powershell:
+    script: |
+      param([string]$WorkDirectory, [string]$Filename, [string]$Baseline, [int]$ExpectedBuild)
+      Import-Module "$WorkDirectory\SccmDeployment.psm1" -Force
+      Set-SccmLog "$WorkDirectory\media.log"
+      $installer = Join-Path $WorkDirectory $Filename
+      $directory = Join-Path $WorkDirectory "media\$Baseline"
+      $setup = Join-Path $directory 'cd.retail.LN\SMSSETUP\BIN\X64\setup.exe'
+      $Ansible.Changed = $false
+      Assert-SccmMicrosoftSignature $installer
+      if (-not (Test-Path -LiteralPath $setup)) {
+          [void][IO.Directory]::CreateDirectory($directory)
+          [void](Invoke-SccmInstaller $installer "/s -d`"$directory`"")
+          $Ansible.Changed = $true
+      } else {
+          Write-SccmLog "Checking previously extracted $Baseline media."
+      }
+      if (-not (Test-Path -LiteralPath $setup)) { Stop-SccmWork "Baseline extraction did not create $setup. See media.log and the handoff media-extraction check." }
+      Assert-SccmMicrosoftSignature $setup
+      $version = [version](Get-Item -LiteralPath $setup).VersionInfo.FileVersion
+      if ($version.Build -ne $ExpectedBuild) { Stop-SccmWork "Wrong baseline media: expected site build $ExpectedBuild, found $version. Correct the media override or clear that version's cache." }
+      $Ansible.Result = @{MediaRoot = (Join-Path $directory 'cd.retail.LN'); SetupVersion = [string]$version}
+    parameters:
+      WorkDirectory: "{{ ludus_sccm_work_directory }}"
+      Filename: "{{ ludus_sccm_selected_deployment.media_filename }}"
+      Baseline: "{{ ludus_sccm_selected_deployment.baseline_version }}"
+      ExpectedBuild: "{{ 9128 if ludus_sccm_selected_deployment.baseline_version == '2403' else 9141 }}"
+  async: 14400
+  poll: 30
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: logon_type=interactive logon_flags=with_profile
+  when: not ansible_check_mode

@@ -52,12 +52,22 @@ ludus range deploy
 
 ## Module Development
 
+The SCCM version/deployment work has focused offline Python and PowerShell
+tests plus Linux-controller check playbooks. See the
+[implementation guide](docs/version-selection.md) and
+[Ludus-host handoff](docs/LUDUS_HOST_HANDOFF.md) for exact commands, results,
+remaining live checks, and owner review commands. The full delivery sequence is
+in [UPGRADE_PLAN.md](UPGRADE_PLAN.md).
+
 Custom modules in `plugins/modules/` follow a dual-file convention:
 
 - **`.py` file** - Ansible module wrapper with a required `DOCUMENTATION` string containing module docs, options, examples, and return values
 - **`.ps1` file** - PowerShell implementation that performs the actual work on Windows targets
 
 When adding or modifying a module, update both files to keep them in sync.
+
+`sccm_version_plan` is a deliberate exception: its action runs entirely on the
+controller, so it has a documentation module and no remote PowerShell partner.
 
 ## Commit Messages
 

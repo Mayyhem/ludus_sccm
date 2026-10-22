@@ -1,0 +1,30 @@
+---
+# Callers supply a version-specific filename and a verified source URL. win_copy
+# compares contents, so a corrupt/stale guest file is replaced on a rerun.
+- name: Create the controller download cache
+  ansible.builtin.file:
+    path: "{{ ludus_install_directory }}/resources/sccm"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_become: false
+
+- name: Download the selected installation file
+  ansible.builtin.get_url:
+    url: "{{ sccm_download_url }}"
+    dest: "{{ ludus_install_directory }}/resources/sccm/{{ sccm_download_filename }}"
+    checksum: "{{ sccm_download_checksum | default(omit, true) }}"
+    mode: "0640"
+    timeout: 120
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_become: false
+
+- name: Copy the selected installation file to Windows
+  ansible.windows.win_copy:
+    src: "{{ ludus_install_directory }}/resources/sccm/{{ sccm_download_filename }}"
+    dest: "{{ ludus_sccm_work_directory }}\\{{ sccm_download_filename }}"
+    force: true
