@@ -15,3 +15,12 @@
     - name: Parse hierarchy servicing
       ansible.builtin.import_role:
         name: mayyhem.ludus_sccm.service_hierarchy
+    - name: Parse secondary creation and parent console preparation
+      ansible.builtin.import_role:
+        name: mayyhem.ludus_sccm.install_secondary_site
+    - name: Parse provider prerequisites and verified installation
+      ansible.builtin.import_role:
+        name: mayyhem.ludus_sccm.prep_sms
+    - name: Parse additional provider readiness
+      ansible.builtin.import_role:
+        name: mayyhem.ludus_sccm.install_sms

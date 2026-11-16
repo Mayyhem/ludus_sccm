@@ -38,14 +38,16 @@ class Release:
 
 # These are release requirements, not a hardcoded choice for "latest".
 # Sources and the maintenance procedure are documented in docs/version-selection.md.
-# 2609 is deliberately not an understood target yet: its prerequisites and early
-# release handling must be implemented before deployments can select it.
+# 2609 requirements reviewed against Microsoft Learn on 2026-10-26: update
+# floor 2503, SQL 2017 CU2 minimum, existing 26100 ADK and ODBC 18.6.2.1 supported.
+# Broad availability still comes from live release evidence, never this list.
 RELEASES = (
     Release("2403", 9128, None, has_baseline=True),
     Release("2409", 9132, "2303"),
     Release("2503", 9135, "2309"),
     Release("2509", 9141, "2403", has_baseline=True),
     Release("2603", 9146, "2409"),
+    Release("2609", 9152, "2503"),
 )
 
 

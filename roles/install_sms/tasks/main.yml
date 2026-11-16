@@ -1,77 +1,83 @@
 ---
-- name: Check if target SMS Provider already exists
-  ansible.windows.win_powershell:
-    script: |
-      $ErrorActionPreference = 'Stop'
-      $target = "{{ ludus_sccm_sms_provider_hostname }}.{{ ludus_domain_fqdn }}"
-      $targetShort = "{{ ludus_sccm_sms_provider_hostname }}"
-      $siteServer = "{{ ludus_sccm_site_server_hostname }}.{{ ludus_domain_fqdn }}"
-      try {
-        $providers = Get-CimInstance -Namespace root\SMS -ClassName SMS_ProviderLocation -ComputerName $siteServer -ErrorAction Stop
-        $exists = $providers | Where-Object { $_.Machine -ieq $target -or $_.Machine -ieq $targetShort }
-        $result = @{ exists = [bool]($exists -ne $null) }
-      }
-      catch {
-        # If the namespace/class isn't available yet on the site server, default to not existing so installation proceeds
-        $result = @{ exists = $false }
-      }
-      $result | ConvertTo-Json -Compress
-  register: sms_provider_check
-  changed_when: false
-  failed_when: false
-  vars:
-    ansible_become: true
-    ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
-    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
-    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
-
-- name: Set fact for SMS Provider existence
-  ansible.builtin.set_fact:
-    sms_provider_exists: "{{ (sms_provider_check.output | default([]) | join('') | length > 0) and ((sms_provider_check.output | default([]) | join('') | from_json).exists | default(false)) }}"
-  changed_when: false
-
-- name: Skip install when provider already present
+- name: Explain SMS Provider installation in check mode
   ansible.builtin.debug:
-    msg: "SMS Provider already installed on {{ ludus_sccm_sms_provider_hostname }}.{{ ludus_domain_fqdn }}; skipping setup."
-  when: sms_provider_exists | bool
+    msg: Native SMS Provider installation and readiness checks are skipped in check mode.
+  when: ansible_check_mode
 
-- name: Start SCCM SMS Provider setup in background
-  ansible.windows.win_shell: |
-    Start-Process -FilePath 'C:\Program Files\Microsoft Configuration Manager\bin\X64\setup.exe' -ArgumentList '/SDKINST','{{ ludus_sccm_sms_provider_hostname }}.{{ ludus_domain_fqdn }}' -NoNewWindow
-  when: not (sms_provider_exists | bool)
+- name: Install and verify the requested additional SMS Provider
+  when: not ansible_check_mode
   vars:
     ansible_become: true
     ansible_become_method: runas
     ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
-    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+    ansible_become_flags: logon_type=interactive logon_flags=with_profile
+  block:
+    - name: Read parent registration and actual target provider readiness
+      ansible.windows.win_powershell: &provider_probe
+        script: "{{ lookup('ansible.builtin.file', role_path ~ '/files/Get-SccmProviderState.ps1') }}"
+        parameters:
+          SiteServer: '{{ ludus_sccm_site_server_hostname }}.{{ ludus_domain_fqdn }}'
+          SiteCode: '{{ ludus_sccm_sitecode }}'
+          Target: '{{ ludus_sccm_sms_provider_hostname }}.{{ ludus_domain_fqdn }}'
+          Domain: '{{ ludus_domain_fqdn }}'
+      register: sccm_provider_before
 
-- name: Wait for SMS Provider installation to complete
-  ansible.windows.win_shell: |
-    $target = "{{ ludus_sccm_sms_provider_hostname }}.{{ ludus_domain_fqdn }}"
-    $targetShort = "{{ ludus_sccm_sms_provider_hostname }}"
-    $siteServer = "{{ ludus_sccm_site_server_hostname }}.{{ ludus_domain_fqdn }}"
-    try {
-      $providers = Get-CimInstance -Namespace root\SMS -ClassName SMS_ProviderLocation -ComputerName $siteServer -ErrorAction Stop
-      $exists = $providers | Where-Object { $_.Machine -ieq $target -or $_.Machine -ieq $targetShort }
-      if ($exists) {
-        Write-Output "SMS Provider installed on $target"
-        exit 0
-      }
-    } catch {
-      Write-Output "WMI query failed: $_"
-    }
-    Write-Output "SMS Provider not yet available - waiting"
-    exit 1
-  register: sms_install_result
-  until: sms_install_result.rc == 0
-  retries: 60
-  delay: 30
-  when: not (sms_provider_exists | bool)
-  vars:
-    ansible_become: true
-    ansible_become_method: runas
-    ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
-    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
-    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+    - name: Wait for an otherwise prepared target to finish native installation work
+      ansible.windows.win_powershell: *provider_probe
+      register: sccm_provider_idle
+      until: not (sccm_provider_idle.failed | default(false)) and ((sccm_provider_idle.result.Ready | default(false) | bool) or (sccm_provider_idle.result.CanInstall | default(false) | bool))
+      retries: 90
+      delay: 10
+      when:
+        - not (sccm_provider_before.result.Registered | bool)
+        - not (sccm_provider_before.result.NamespaceExists | bool)
+        - sccm_provider_before.result.AdkDeploymentTools | bool
+        - sccm_provider_before.result.OtherSites | length == 0
+
+    - name: Keep the last observed provider state
+      ansible.builtin.set_fact:
+        sccm_provider_state: '{{ sccm_provider_idle.result | default(sccm_provider_before.result) }}'
+
+    - name: Reject incomplete registration or missing provider prerequisites before native setup
+      ansible.builtin.assert:
+        that:
+          - sccm_provider_state.Ready or sccm_provider_state.CanInstall
+        fail_msg: >-
+          The requested SMS Provider is not ready for installation. Parent registration alone is not readiness.
+          A registered target without its working namespace/version requires supported provider repair;
+          otherwise finish prep_sms (including ADK Deployment Tools), any restart, and active installers first.
+          State={{ sccm_provider_state }}
+
+    - name: Skip installation only when the requested provider is actually ready
+      ansible.builtin.debug:
+        msg: 'SMS Provider {{ ludus_sccm_sms_provider_hostname }} matches its active parent and is ready.'
+      when: sccm_provider_state.Ready | bool
+
+    - name: Start native setup for an absent prepared SMS Provider
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$Parent,[string]$Target)
+          $ErrorActionPreference='Stop'
+          if(($Parent -split '\.')[0] -ine $env:COMPUTERNAME){throw 'Run provider setup only on the configured site server.'}
+          $waiting=[Diagnostics.Stopwatch]::StartNew()
+          while(@(Get-Process setup,setupwpf -ErrorAction SilentlyContinue).Count){
+            if($waiting.Elapsed.TotalMinutes -ge 15){throw 'Native setup is still active; no additional provider setup was submitted or terminated.'}
+            Start-Sleep -Seconds 10
+          }
+          $setup=Join-Path $env:ProgramFiles 'Microsoft Configuration Manager\bin\X64\setup.exe'
+          if(-not (Test-Path -LiteralPath $setup -PathType Leaf)){throw 'Installed site setup is missing.'}
+          $process=Start-Process -FilePath $setup -ArgumentList @('/SDKINST',$Target) -WindowStyle Hidden -Wait -PassThru
+          if($process.ExitCode -ne 0){throw "Native SMS Provider setup exited $($process.ExitCode). Review C:\ConfigMgrSetup.log before retrying."}
+          $Ansible.Changed=$true
+        parameters:
+          Parent: '{{ ludus_sccm_site_server_hostname }}.{{ ludus_domain_fqdn }}'
+          Target: '{{ ludus_sccm_sms_provider_hostname }}.{{ ludus_domain_fqdn }}'
+      when: not (sccm_provider_state.Ready | bool)
+
+    - name: Wait for target namespace and version to match the active parent
+      ansible.windows.win_powershell: *provider_probe
+      register: sccm_provider_after
+      until: not (sccm_provider_after.failed | default(false)) and (sccm_provider_after.result.Ready | default(false) | bool)
+      retries: 60
+      delay: 30

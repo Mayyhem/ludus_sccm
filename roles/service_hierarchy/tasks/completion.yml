@@ -1,0 +1,20 @@
+---
+- name: Copy the completion script for the selected deployment
+  ansible.windows.win_copy:
+    src: Complete-SccmDeployment.ps1
+    dest: "{{ ludus_sccm_work_directory }}\\Complete-SccmDeployment.ps1"
+- name: Complete components across native guest restart checkpoints
+  ansible.builtin.include_role:
+    name: mayyhem.ludus_sccm.sccm_common
+    tasks_from: run_phase.yml
+    public: true
+  vars:
+    sccm_phase_name: Update and verify installed components
+    sccm_phase_script: Complete-SccmDeployment.ps1
+    sccm_phase_arguments:
+      SiteCode: "{{ ludus_sccm_sitecode }}"
+      TargetBuild: "{{ ludus_sccm_selected_plan.target_site_build | int }}"
+      TimeoutMinutes: "{{ ludus_sccm_update_timeout_minutes | int }}"
+      ClientTimeoutMinutes: "{{ ludus_sccm_client_timeout_minutes | int }}"
+      AdditionalComputers: "{{ ludus_sccm_component_hosts }}"
+      CheckpointForReboot: true

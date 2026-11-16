@@ -1,0 +1,61 @@
+---
+# Run only against an explicitly selected Windows test guest. This downloads a
+# Microsoft installer and verifies checksums; it never installs the package.
+- name: Verify direct guest downloads without a controller cache
+  hosts: all
+  gather_facts: false
+  vars:
+    ludus_sccm_download_on_guest: true
+    ludus_sccm_work_directory: 'C:\ludus\sccm'
+    sccm_download_url: https://download.microsoft.com/download/7bf9fad4-0f21-486d-a750-fc990ded5624/amd64/1033/msodbcsql.msi
+    sccm_download_filename: odbc-18.6.2.1.msi
+  tasks:
+    - name: Create the Windows download destination
+      ansible.windows.win_file:
+        path: '{{ ludus_sccm_work_directory }}'
+        state: directory
+
+    - name: Download without an optional checksum
+      ansible.builtin.include_role:
+        name: mayyhem.ludus_sccm.sccm_common
+        tasks_from: download
+
+    - name: Read the downloaded hash and Microsoft signature
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$Path)
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+          $signature = Get-AuthenticodeSignature -LiteralPath $Path
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
+              throw 'The downloaded Microsoft installer did not pass signature verification.'
+          }
+          $Ansible.Result = @{Hash = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash}
+        parameters:
+          Path: '{{ ludus_sccm_work_directory }}\{{ sccm_download_filename }}'
+      register: downloaded
+
+    - name: Verify the same file with its explicit SHA256 checksum
+      ansible.builtin.include_role:
+        name: mayyhem.ludus_sccm.sccm_common
+        tasks_from: download
+      vars:
+        sccm_download_checksum: 'sha256:{{ downloaded.result.Hash }}'
+
+    - name: Reject a malformed checksum before any transfer
+      block:
+        - name: Attempt an invalid checksum
+          ansible.builtin.include_role:
+            name: mayyhem.ludus_sccm.sccm_common
+            tasks_from: download
+          vars:
+            sccm_download_checksum: sha256:not-a-hex-digest
+        - name: Fail if an invalid checksum was accepted
+          ansible.builtin.fail:
+            msg: The malformed checksum was accepted.
+      rescue:
+        - name: Require the checksum validation guard to be the failure
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Validate an optional guest-download checksum'
+              - "'literal algorithm:hex' in ansible_failed_result.msg"

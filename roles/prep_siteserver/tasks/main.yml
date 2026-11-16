@@ -29,6 +29,17 @@
       - Web-Scripting-Tools
       - Web-Mgmt-Service
     state: present
+  register: ludus_sccm_site_server_features
+
+# Fresh feature installation can leave remote WMI access stale even when
+# Windows reports no pending restart. Refresh it before SCCM checks the host.
+- name: Restart after site-server Windows feature changes
+  ansible.windows.win_reboot:
+    reboot_timeout: 900
+    post_reboot_delay: 20
+  when:
+    - not ansible_check_mode
+    - ludus_sccm_site_server_features.changed or (ludus_sccm_site_server_features.reboot_required | default(false) | bool)
 
 - name: Prepare supported SCCM prerequisites
   ansible.builtin.include_role:

@@ -1,0 +1,9 @@
+---
+- name: Match the local servicing console and complete any native restart request
+  ansible.builtin.include_tasks: run_phase.yml
+  vars:
+    sccm_phase_name: Refresh the servicing console
+    sccm_phase_script: ServicingConsole
+    sccm_phase_arguments:
+      SiteCode: "{{ ludus_sccm_sitecode }}"
+      TimeoutMinutes: "{{ ludus_sccm_update_timeout_minutes | int }}"

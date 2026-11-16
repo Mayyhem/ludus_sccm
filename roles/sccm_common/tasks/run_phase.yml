@@ -1,0 +1,14 @@
+---
+- name: Initialize the bounded deployment phase
+  ansible.builtin.set_fact:
+    ludus_sccm_phase_complete: false
+- name: Run or resume the phase after its native restart checkpoints
+  ansible.builtin.include_tasks: phase_attempt.yml
+  loop: "{{ range(0, (ludus_sccm_max_restart_rounds | int) + 1) | list }}"
+  loop_control:
+    loop_var: sccm_restart_round
+  when: not (ludus_sccm_phase_complete | bool)
+- name: Require the phase to complete within its restart limit
+  ansible.builtin.assert:
+    that: ludus_sccm_phase_complete | bool
+    fail_msg: "{{ sccm_phase_name }} did not complete within its restart limit. Review the retained native and deployment logs."

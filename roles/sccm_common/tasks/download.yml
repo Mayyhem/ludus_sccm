@@ -1,30 +1,52 @@
 ---
-# Callers supply a version-specific filename and a verified source URL. win_copy
-# compares contents, so a corrupt/stale guest file is replaced on a rerun.
-- name: Create the controller download cache
-  ansible.builtin.file:
-    path: "{{ ludus_install_directory }}/resources/sccm"
-    state: directory
-    mode: "0750"
-  delegate_to: localhost
-  vars:
-    ansible_connection: local
-    ansible_become: false
+# Both routes leave installers at the same guest path. Signature and embedded
+# version checks still run before any installer is executed.
+- name: Cache and copy installation files through the controller
+  when: not (ludus_sccm_download_on_guest | bool)
+  block:
+    - name: Create the controller download cache
+      ansible.builtin.file:
+        path: "{{ ludus_sccm_cache_directory }}"
+        state: directory
+        mode: "0750"
+      delegate_to: localhost
+      vars:
+        ansible_connection: local
+        ansible_become: false
 
-- name: Download the selected installation file
-  ansible.builtin.get_url:
+    - name: Download the selected installation file
+      ansible.builtin.get_url:
+        url: "{{ sccm_download_url }}"
+        dest: "{{ ludus_sccm_cache_directory }}/{{ sccm_download_filename }}"
+        checksum: "{{ sccm_download_checksum | default(omit, true) }}"
+        mode: "0640"
+        timeout: 120
+      delegate_to: localhost
+      vars:
+        ansible_connection: local
+        ansible_become: false
+
+    - name: Copy the selected installation file to Windows
+      ansible.windows.win_copy:
+        src: "{{ ludus_sccm_cache_directory }}/{{ sccm_download_filename }}"
+        dest: "{{ ludus_sccm_work_directory }}\\{{ sccm_download_filename }}"
+        force: true
+
+- name: Validate an optional guest-download checksum
+  ansible.builtin.assert:
+    that:
+      - >-
+        (sccm_download_checksum | default('', true) | length == 0) or
+        (sccm_download_checksum is match('^(md5|sha1|sha256|sha384|sha512):[a-fA-F0-9]+$'))
+    fail_msg: "Guest downloads require a literal algorithm:hex checksum, such as sha256:<hex>."
+  when: ludus_sccm_download_on_guest | bool
+
+- name: Download the selected installation file directly to Windows
+  ansible.windows.win_get_url:
     url: "{{ sccm_download_url }}"
-    dest: "{{ ludus_install_directory }}/resources/sccm/{{ sccm_download_filename }}"
-    checksum: "{{ sccm_download_checksum | default(omit, true) }}"
-    mode: "0640"
-    timeout: 120
-  delegate_to: localhost
-  vars:
-    ansible_connection: local
-    ansible_become: false
-
-- name: Copy the selected installation file to Windows
-  ansible.windows.win_copy:
-    src: "{{ ludus_install_directory }}/resources/sccm/{{ sccm_download_filename }}"
     dest: "{{ ludus_sccm_work_directory }}\\{{ sccm_download_filename }}"
-    force: true
+    checksum: "{{ (sccm_download_checksum.split(':', 1)[1]) if (sccm_download_checksum | default('', true) | length > 0) else omit }}"
+    checksum_algorithm: "{{ (sccm_download_checksum.split(':', 1)[0]) if (sccm_download_checksum | default('', true) | length > 0) else omit }}"
+    force: false
+    url_timeout: 120
+  when: ludus_sccm_download_on_guest | bool

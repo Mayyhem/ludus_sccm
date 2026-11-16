@@ -1,0 +1,71 @@
+---
+# Entries with a password get a domain account; others must already exist
+# (e.g. the network access account created by the primary site role).
+- name: Create domain accounts for requested SCCM administrators
+  microsoft.ad.user:
+    name: '{{ item.user }}'
+    password: '{{ item.password }}'
+    password_never_expires: true
+    update_password: on_create
+    state: present
+  loop: '{{ ludus_sccm_administrative_users | selectattr("password", "defined") | list }}'
+  loop_control:
+    label: '{{ item.user }}'
+- name: Add requested custom security roles and administrative users
+  ansible.windows.win_powershell:
+    script: |
+      param([string]$Directory, [string]$Code, [string]$Domain, [object[]]$Roles, [object[]]$Users)
+      Import-Module "$Directory\SccmDeployment.psm1" -Force
+      Set-SccmLog "$Directory\hierarchy-update.log"
+      $changes = @()
+      try {
+          Connect-SccmSite $Code $env:COMPUTERNAME
+          foreach ($role in $Roles) {
+              $name = [string]$role.name
+              $source = [string]$role.copy_from
+              if (-not $name -or -not $source) { Stop-SccmWork 'Each ludus_sccm_custom_security_roles entry needs a name and copy_from.' }
+              if (Get-CMSecurityRole -Name $name) {
+                  Write-SccmLog "Security role $name already exists."
+              } else {
+                  if (-not (Get-CMSecurityRole -Name $source)) { Stop-SccmWork "Security role $source does not exist to copy." }
+                  Write-SccmLog "Creating security role $name as a copy of $source."
+                  [void](Copy-CMSecurityRole -SourceRoleName $source -Name $name -ErrorAction Stop)
+                  $changes += "Role $name"
+              }
+              if (-not (Get-CMSecurityRole -Name $name)) { Stop-SccmWork "Security role $name was not created." }
+          }
+          foreach ($entry in $Users) {
+              $account = [string]$entry.user
+              $wanted = @($entry.roles | ForEach-Object { [string]$_ })
+              if (-not $account -or -not $wanted.Count) { Stop-SccmWork 'Each ludus_sccm_administrative_users entry needs a user and roles.' }
+              # A bare account name belongs to the lab domain.
+              if ($account -notlike '*\*') { $account = "$Domain\$account" }
+              $admin = Get-CMAdministrativeUser -Name $account
+              if (-not $admin) {
+                  # Same reach as the installing administrator: every object and both default collections.
+                  Write-SccmLog "Adding $account as an SCCM administrator with roles $($wanted -join ', ')."
+                  [void](New-CMAdministrativeUser -Name $account -RoleName $wanted -SecurityScopeName 'All' `
+                      -CollectionName 'All Systems', 'All Users and User Groups' -ErrorAction Stop)
+                  $changes += "Administrator $account"
+              } else {
+                  foreach ($role in $wanted | Where-Object { $_ -notin @($admin.RoleNames) }) {
+                      Write-SccmLog "Adding role $role to existing SCCM administrator $account."
+                      Add-CMSecurityRoleToAdministrativeUser -AdministrativeUserName $account -RoleName $role -ErrorAction Stop
+                      $changes += "Role $role for $account"
+                  }
+              }
+              $missing = @($wanted | Where-Object { $_ -notin @((Get-CMAdministrativeUser -Name $account).RoleNames) })
+              if ($missing.Count) { Stop-SccmWork "$account is missing roles: $($missing -join ', ')." }
+          }
+      } finally { Set-Location $env:SystemDrive\ }
+      $Ansible.Changed = [bool]$changes.Count
+      $Ansible.Result = @($changes)
+    parameters:
+      Directory: '{{ ludus_sccm_work_directory }}'
+      Code: '{{ ludus_sccm_sitecode }}'
+      Domain: '{{ ludus_domain_netbios_name }}'
+      Roles: '{{ ludus_sccm_custom_security_roles }}'
+      # Passwords stay out of the SCCM step; only names and roles are passed.
+      Users: "{{ ludus_sccm_administrative_users | map('dict2items') | map('rejectattr', 'key', 'equalto', 'password')
+        | map('items2dict') | list }}"
+  register: ludus_sccm_administrator_result

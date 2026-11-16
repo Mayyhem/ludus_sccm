@@ -75,6 +75,7 @@ class VersionPlanTests(unittest.TestCase):
             ("2503", "2403", ("2503",)),
             ("2509", "2509", ()),
             ("2603", "2509", ("2603",)),
+            ("2609", "2509", ("2609",)),
         )
         for target, baseline, updates in cases:
             with self.subTest(target=target):
@@ -144,7 +145,6 @@ class VersionPlanTests(unittest.TestCase):
 
     def test_unknown_and_malformed_targets_are_rejected(self):
         for target in (
-            "2609",
             "2703",
             "latest-preview",
             " 2509",
@@ -196,6 +196,17 @@ class ReleaseDiscoveryTests(unittest.TestCase):
         self.assertEqual(
             result.discovery_sources,
             (UPDATES_URL, checklist_url("2609"), checklist_url("2603")),
+        )
+
+    def test_newly_broad_2609_becomes_latest_without_changing_early_ring_policy(self):
+        self.documents[checklist_url("2609")] = checklist("2609", True)
+        result = plan_version(read_document=self.documents.__getitem__)
+        self.assertEqual(result.target_version, "2609")
+        self.assertEqual(result.target_site_build, 9152)
+        self.assertEqual(result.baseline_version, "2509")
+        self.assertEqual(result.upgrade_versions, ("2609",))
+        self.assertEqual(
+            result.discovery_sources, (UPDATES_URL, checklist_url("2609"))
         )
 
     def test_historical_table_cannot_supply_latest(self):

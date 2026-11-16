@@ -11,8 +11,9 @@ switch. Edit these shared values on the first VM in `new-config.yml`; the other
 VMs inherit them through its YAML anchor:
 
 ```yaml
-ludus_sccm_target_version: "latest"  # Or "2403", "2409", "2503", "2509", "2603"
+ludus_sccm_target_version: "latest"  # Or "2403", "2409", "2503", "2509", "2603", "2609"
 ludus_sccm_install_hotfixes: true
+ludus_sccm_enable_enhanced_http: true
 ```
 
 `latest` discovers Microsoft's newest globally available current-branch release
@@ -22,14 +23,34 @@ with unreviewed requirements stop clearly until support is added. An existing
 site is serviced through supported updates; selecting an older release requires
 a fresh lab.
 
+The sample enables Enhanced HTTP separately at CAS and each primary using
+Configuration Manager generated certificates. The role default preserves existing
+settings (`ludus_sccm_enable_enhanced_http: false`); enable the option when the
+target release requires HTTPS or Enhanced HTTP and the lab has no PKI deployment.
+CAS uses the documented site-control SDK because the 2509 cmdlet skips CAS
+communication writes. It retains the Network Access Account and client-approval settings. Anonymous DP
+access must already be disabled. Allow up to 30 minutes for native certificate
+configuration before evaluating management-point readiness. See Microsoft's
+[Enhanced HTTP documentation](https://learn.microsoft.com/en-us/intune/configmgr/core/plan-design/hierarchy/enhanced-http).
+
 The final role updates the hierarchy, applicable registered fixes, installed
 consoles and reachable installed clients, then verifies readiness and distributed
 boot images. It writes `C:\ludus\sccm\deployment-report.json` on CAS-PSS and
 fetches logs/reports to `/opt/ludus/resources/sccm/reports/<range_id>/`.
 
-**Ready for host testing:** the code is connected, and local offline checks pass.
-Linux Ansible checks and live deployment have not run. Build this source rather
-than installing the published Galaxy collection to test these unmerged changes.
+**Assisted host validation passed on October 27, 2026:** the isolated cthompson
+range completed baseline 2509 through 2609, including hierarchy, passive server,
+12 installed clients, two consoles and the deployed boot image. MP, TFTP and fresh
+inventory probes passed. A clean rebuild using the final source remains unverified;
+Native client, console, site-update and Windows prerequisite restart checkpoints
+now use bounded serial Ansible restarts and resume the interrupted phase; clean
+end-to-end validation is in progress.
+Existing research-lab upgrades remain untested. Build
+this source rather than installing the published Galaxy collection to test
+these unmerged changes. The sample config pins OS cumulative updates on PSS and
+LIB before SCCM setup: the old Server 2022 image produced native remote-library
+sharing errors that cleared after updating both SMB endpoints. Optional OS
+servicing is documented in [the Windows base role](roles/windows_base/README.md).
 Use the [Ludus-host agent handoff](docs/LUDUS_HOST_HANDOFF.md) for exact build,
 installation, test, recovery, and failure-investigation instructions.
 
@@ -81,6 +102,10 @@ Installation occurs in roughly the following order:
 - The passive site server for `PS1` (`PS1-PSV`) is added to the local admins group on relevant systems
 - The passive site server is installed for `PS1`
 - A child secondary site is installed under `PS1` (`SEC`)
+- After the hierarchy is serviced and its clients verified, the CAS adds collector-testing RBAC and user device affinity:
+  - a custom security role (`Custom Role`, a copy of Read-only Analyst)
+  - `networkaccess` as a Full Administrator and a new `roanalyst` account as a Read-only Analyst
+  - `domainuser` as the primary user of `PS1-DEV`
 
 This lab is susceptible to ALL attack techniques and subtechniques detailed in Misconfiguration Manager at the time of this writing with the exception of ELEVATE-4 and ELEVATE-5 (because PKI certs are not required for client authentication in the lab) and TAKEOVER-9 (because I didn’t need to link databases with sysadmin privileges for the collector testing and writing Ansible roles is time consuming).
 
@@ -112,6 +137,14 @@ Next, set the configuration file for the range and deploy it:
 ludus range config set -f new-config.yml
 ludus range deploy
 ```
+
+PXE setup can download its Windows ISO directly on the site server. Set
+`ludus_sccm_pxe_iso_url` and `ludus_sccm_pxe_iso_checksum` (the exact SHA-256)
+in that VM's `role_vars`. The role verifies the download and reuses a matching
+file on subsequent runs. With no URL, it retains the controller ISO source
+configured by `ludus_iso_path` and `ludus_sccm_pxe_iso_filename`. Changing the ISO
+after an OS image is cached requires updating that image through Configuration
+Manager; the role stops instead of silently reusing the old WIM.
 
 ## Building the Collection from Source
 
@@ -148,6 +181,36 @@ ludus power off -n all && sleep 300 && ludus power on -n all && sleep 300 && lud
 This will reboot everything and try again.
 
 If you've already passed the initial setup of the VMs and reach deployment of the Ansible roles defined in this project, you can run `ludus range deploy` with the `-t user-defined-roles` option to skip setup.
+
+### A VM fails Ludus's Sysprep step
+
+Ludus runs Sysprep on each cloned VM so every machine gets its own identity.
+Windows 11 Sysprep occasionally fails when a built-in Store app (for example
+`Microsoft.WidgetsPlatformRuntime`) updates itself for one user. The error says
+"Sysprep failed!" and names the package. Ludus may already remove the package and
+retry; if Sysprep still fails, that VM is left out of the rest of the deploy and
+the final SCCM step stops because the machine is unreachable. Other VMs keep
+their progress. To recover without a teardown:
+
+```
+ludus range deploy --limit <range_id>-ps1-dev
+ludus range deploy -t user-defined-roles --limit <range_id>-cas-pss --only-roles mayyhem.ludus_sccm.service_hierarchy
+```
+
+The first command re-runs Sysprep, domain join and that VM's own roles. The
+second re-runs the final SCCM step on the CAS, which installs the client and
+verifies the whole hierarchy. Use the failed VM's name in place of `ps1-dev`.
+Keep Sysprep enabled on servers: without it clones share the template's
+machine identity, which collides with the domain's identity and breaks software
+update reporting.
+
+### Report copy
+
+At the end, the final SCCM step copies its logs and `deployment-report.json` to
+`ludus_sccm_artifacts_directory` on the Ludus host. If the Ludus service cannot
+create that folder, the step prints one warning and the deploy continues; the
+reports stay in `C:\ludus\sccm` on the CAS. Set the variable to `''` to turn
+the copy off.
 
 If that doesn’t work, try tearing it down and rebuilding. If that doesn't work either, pleasehit me up with your logs and I’ll do my best to help you resolve the issue:
 

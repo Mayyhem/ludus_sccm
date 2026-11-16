@@ -7,6 +7,18 @@ from plugins.module_utils.sccm_versions import VersionPlanningError, plan_versio
 
 
 class DeploymentSettingsTests(unittest.TestCase):
+    def test_2609_uses_2509_media_and_direct_supported_servicing(self):
+        plan = plan_version("2609", current_site_versions={"CAS": "2509"})
+        settings = deployment_settings(plan)
+        self.assertEqual(plan.upgrade_versions, ("2609",))
+        self.assertEqual(settings["baseline_version"], "2509")
+        self.assertEqual(settings["release_builds"]["2609"], 9152)
+        self.assertEqual(settings["prerequisites"]["odbc_version"], "18.6.2.1")
+
+    def test_2609_from_2403_keeps_required_intermediate_hop(self):
+        plan = plan_version("2609", current_site_versions={"CAS": "2403"})
+        self.assertEqual(plan.upgrade_versions, ("2509", "2609"))
+
     def test_existing_route_keeps_the_new_install_media_choice_separate(self):
         plan = plan_version("2603", current_site_versions={"CAS": "5.00.9128.1000"})
         settings = deployment_settings(plan)

@@ -1,0 +1,74 @@
+---
+# Controller-only: exercises the report copy with a writable, an uncreatable and a disabled destination.
+- name: Verify the servicing report copy never fails the deployment
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ludus_install_directory: /nonexistent
+    ludus_sccm_work_directory: C:\ludus\sccm
+  tasks:
+    - name: Fix one fixture directory for the whole play
+      ansible.builtin.set_fact:
+        fixture: "{{ lookup('env', 'TMPDIR') | default('/tmp', true) }}/ludus-sccm-report-{{ 999999 | random }}"
+    - name: Create the fixture guest folder
+      ansible.builtin.file:
+        path: '{{ fixture }}/guest'
+        state: directory
+        mode: '0700'
+    - name: Create fixture evidence files
+      ansible.builtin.copy:
+        dest: '{{ fixture }}/guest/{{ item }}'
+        content: '{{ item }}'
+        mode: '0600'
+      loop: [hierarchy-update.log, deployment-report.json]
+    - ansible.builtin.set_fact:
+        ludus_sccm_evidence_files:
+          files:
+            - path: '{{ fixture }}/guest/hierarchy-update.log'
+            - path: '{{ fixture }}/guest/deployment-report.json'
+
+    - name: Writable destination copies every report
+      ansible.builtin.include_role:
+        name: mayyhem.ludus_sccm.service_hierarchy
+        tasks_from: report.yml
+      vars:
+        ludus_sccm_artifacts_directory: '{{ fixture }}/reports'
+    - ansible.builtin.stat:
+        path: '{{ fixture }}/reports/localhost/{{ item }}'
+      loop: [hierarchy-update.log, deployment-report.json]
+      register: copied
+    - ansible.builtin.assert:
+        that:
+          - copied.results | map(attribute='stat.exists') | min
+          - ludus_sccm_report_message.msg is search('^Reports copied to ' + fixture + '/reports/localhost/')
+
+    - name: Uncreatable destination warns and continues
+      ansible.builtin.include_role:
+        name: mayyhem.ludus_sccm.service_hierarchy
+        tasks_from: report.yml
+      vars:
+        ludus_sccm_artifacts_directory: /proc/ludus-sccm-report-test
+    - ansible.builtin.assert:
+        that:
+          - not (ludus_sccm_report_destination_ready | bool)
+          - ludus_sccm_report_fetch is skipped
+          - ludus_sccm_report_message.msg is search('^WARNING. reports were not copied because the controller cannot create /proc/ludus-sccm-report-test/localhost')
+          - ludus_sccm_report_message.msg is search('Reports are in C:.ludus.sccm on this server')
+
+    - name: Empty destination turns the copy off
+      ansible.builtin.include_role:
+        name: mayyhem.ludus_sccm.service_hierarchy
+        tasks_from: report.yml
+      vars:
+        ludus_sccm_artifacts_directory: ''
+    - ansible.builtin.assert:
+        that:
+          - ludus_sccm_report_destination is skipped
+          - ludus_sccm_report_fetch is skipped
+          - ludus_sccm_report_message.msg is search('^Controller report copy is turned off')
+
+    - name: Remove fixture
+      ansible.builtin.file:
+        path: '{{ fixture }}'
+        state: absent

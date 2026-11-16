@@ -1,0 +1,58 @@
+---
+- name: Resolve the restart target to the current range inventory
+  ansible.builtin.set_fact:
+    sccm_restart_inventory_host: "{{ ludus_sccm_restart_inventory_map.get(sccm_restart_request.Computer, ludus_sccm_restart_inventory_map.get(sccm_restart_request.Computer.split('.')[0] | lower, (range_id | default('')) ~ '-' ~ (sccm_restart_request.Computer.split('.')[0] | lower))) }}"
+- name: Refuse restart targets outside this range inventory
+  ansible.builtin.assert:
+    that:
+      - range_id is defined
+      - sccm_restart_inventory_host in hostvars
+      - sccm_restart_inventory_host.startswith(range_id ~ '-')
+      - hostvars[sccm_restart_inventory_host].ansible_connection | default('') == 'winrm'
+      - sccm_restart_request.Kind in ['Client', 'Console', 'SiteUpdate', 'WindowsPrerequisite']
+    fail_msg: The native restart target is not a Windows guest in this range inventory. Supply ludus_sccm_restart_inventory_map for custom VM names.
+- name: Guard and restart the exact inventory guest
+  delegate_to: "{{ sccm_restart_inventory_host }}"
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: SYSTEM
+    ansible_become_flags: ''
+  block:
+    - name: Copy the restart verification helper
+      ansible.windows.win_copy:
+        src: SccmDeployment.psm1
+        dest: "{{ ludus_sccm_work_directory }}\\SccmDeployment.psm1"
+    - name: Verify guest identity, native checkpoint and idle installation work
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$Directory, [hashtable]$Request)
+          $ErrorActionPreference='Stop'
+          $Ansible.Changed=$false
+          Import-Module "$Directory\SccmDeployment.psm1" -Force
+          $Ansible.Result=Test-SccmGuestRestart $Request
+        parameters:
+          Directory: "{{ ludus_sccm_work_directory }}"
+          Request: "{{ sccm_restart_request }}"
+      register: sccm_restart_guard
+    - name: Perform the checkpointed normal guest restart
+      ansible.windows.win_reboot:
+        msg: "SCCM deployment: complete the native {{ sccm_restart_request.Kind }} restart checkpoint."
+        reboot_timeout: "{{ ludus_sccm_restart_timeout_seconds | int }}"
+        post_reboot_delay: 30
+      when: sccm_restart_guard.result.NeedsRestart | bool
+    - name: Wait for the native checkpoint to clear after boot
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$Directory, [hashtable]$Request)
+          $ErrorActionPreference='Stop'
+          $Ansible.Changed=$false
+          Import-Module "$Directory\SccmDeployment.psm1" -Force
+          $Ansible.Result=@{Ready=(Test-SccmGuestAfterRestart $Request);Computer=$env:COMPUTERNAME}
+        parameters:
+          Directory: "{{ ludus_sccm_work_directory }}"
+          Request: "{{ sccm_restart_request }}"
+      register: sccm_restarted_ready
+      until: not (sccm_restarted_ready.failed | default(false)) and (sccm_restarted_ready.result.Ready | default(false) | bool)
+      retries: 90
+      delay: 10

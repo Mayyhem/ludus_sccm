@@ -1,4 +1,13 @@
 ---
 ludus_sccm_catalog_settle_seconds: 120
+# Explicit opt-in: preserve existing communication settings unless requested.
+ludus_sccm_enable_enhanced_http: false
 ludus_sccm_component_hosts: []
+# Optional lab RBAC: copies of built-in roles, e.g. [{name: Custom Role, copy_from: Read-only Analyst}].
+ludus_sccm_custom_security_roles: []
+# Optional SCCM administrators, e.g. [{user: roanalyst, roles: [Read-only Analyst], password: ...}].
+# A password creates the domain account; without one the account must already exist.
+ludus_sccm_administrative_users: []
+# Optional user device affinity, e.g. [{device: PS1-DEV, user: domainuser}].
+ludus_sccm_primary_users: []
 ludus_sccm_artifacts_directory: "{{ ludus_install_directory }}/resources/sccm/reports/{{ range_id | default('manual') }}"

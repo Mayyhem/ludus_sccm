@@ -1,0 +1,3 @@
+---
+# Optional, explicit OS security KBs. No OS updates are installed by default.
+ludus_sccm_windows_update_accept_list: []

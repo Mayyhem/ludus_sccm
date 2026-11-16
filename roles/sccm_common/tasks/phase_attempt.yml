@@ -1,0 +1,53 @@
+---
+- name: Execute an unfinished deployment phase
+  when: not (ludus_sccm_phase_complete | bool)
+  block:
+  - name: "{{ sccm_phase_name }} (attempt {{ (sccm_restart_round | int) + 1 }})"
+    ansible.windows.win_powershell:
+      script: |
+        param([string]$Directory, [string]$Phase, [hashtable]$Arguments)
+        $ErrorActionPreference='Stop'
+        Import-Module "$Directory\SccmDeployment.psm1" -Force
+        Set-SccmLog "$Directory\hierarchy-update.log"
+        try {
+            if ($Phase -eq 'ServicingConsole') {
+                $result=Update-SccmServicingConsole $env:COMPUTERNAME $Arguments.SiteCode $Arguments.TimeoutMinutes
+            } else {
+                if ($Phase -notin @('Update-SccmRelease.ps1','Update-SccmHotfixes.ps1','Complete-SccmDeployment.ps1')) { throw 'Unknown deployment phase.' }
+                $Arguments.WorkDirectory=$Directory
+                $Arguments.Provider=$env:COMPUTERNAME
+                $result=& "$Directory\$Phase" @Arguments
+            }
+            if (-not $result.ContainsKey('RebootRequests')) { $result.RebootRequests=@() }
+            if (-not $result.ContainsKey('Complete')) { $result.Complete=($result.RebootRequests.Count -eq 0) }
+            $Ansible.Result=$result
+            $Ansible.Changed=$result.Changed
+        } catch {
+            if (-not $_.Exception.Data.Contains('SccmRestartRequestsJson')) { throw }
+            $requests=$_.Exception.Data['SccmRestartRequestsJson'] | ConvertFrom-Json
+            $Ansible.Result=@{Complete=$false;Changed=$true;RebootRequests=@($requests)}
+            $Ansible.Changed=$true
+        } finally { Set-Location $env:SystemDrive\ }
+      parameters:
+        Directory: "{{ ludus_sccm_work_directory }}"
+        Phase: "{{ sccm_phase_script }}"
+        Arguments: "{{ sccm_phase_arguments }}"
+      depth: 12
+    async: 172800
+    poll: 30
+    register: ludus_sccm_phase_result
+  - name: Record the phase checkpoint
+    ansible.builtin.set_fact:
+      ludus_sccm_phase_complete: "{{ ludus_sccm_phase_result.result.Complete | bool }}"
+  - name: Require an identified restart checkpoint before resuming
+    ansible.builtin.assert:
+      that:
+        - ludus_sccm_phase_result.result.RebootRequests | length > 0
+        - sccm_restart_round | int < ludus_sccm_max_restart_rounds | int
+      fail_msg: "{{ sccm_phase_name }} is incomplete or exceeded its restart limit; see its report and logs."
+    when: not (ludus_sccm_phase_complete | bool)
+  - name: Restart only checkpointed inventory guests before resuming
+    ansible.builtin.include_tasks: restart.yml
+    vars:
+      sccm_restart_requests: "{{ ludus_sccm_phase_result.result.RebootRequests }}"
+    when: not (ludus_sccm_phase_complete | bool)

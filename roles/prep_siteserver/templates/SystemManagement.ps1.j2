@@ -28,27 +28,30 @@
 #
 # ***************************************************************************
 
+[CmdletBinding(SupportsShouldProcess=$true)]
+param()
+
+$ErrorActionPreference = 'Stop'
+Import-Module ActiveDirectory
+
 # Add user to Schema Admins
-$username = '{{ defaults.ad_domain_admin }}' 
+$username = '{{ defaults.ad_domain_admin }}'
 
 # Get the user object
-$user = Get-ADUser -Identity $username
+$user = Get-ADUser -Identity $username -Properties MemberOf
 
 # Check if the user exists
 if ($user) {
     # Get the Schema Admins group
     $group = Get-ADGroup -Identity "Schema Admins"
 
-    # Add the user to the Domain Admins group
-    Add-ADGroupMember -Identity $group -Members $user
-
-    Write-Host "User '$username' has been added to the Schema Admins group."
+    if ($user.MemberOf -notcontains $group.DistinguishedName -and $PSCmdlet.ShouldProcess($group.DistinguishedName, "Ensure $username schema-administration membership")) {
+        Add-ADGroupMember -Identity $group -Members $user
+        Write-Host "User '$username' has been added to the Schema Admins group."
+    }
 } else {
     Write-Host "User '$username' not found."
 }
-
-# Load the AD module
-Import-Module ActiveDirectory
 
 # Figure out our domain
 $root = (Get-ADRootDSE).defaultNamingContext
@@ -67,21 +70,39 @@ Write-Verbose "System Management container does not currently exist."
 
 if ($ou -eq $null)
 {
-$ou = New-ADObject -Type Container -name "System Management" -Path "CN=System,$root" -Passthru
+if ($PSCmdlet.ShouldProcess("CN=System,$root", "Create System Management container")) {
+    $ou = New-ADObject -Type Container -name "System Management" -Path "CN=System,$root" -Passthru
+} else { return }
 }
 
 # Get the current ACL for the OU
 $acl = get-acl "ad:CN=System Management,CN=System,$root"
 
-# Get the computer's SID
-$computer = get-adcomputer $env:ComputerName
-$sid = [System.Security.Principal.SecurityIdentifier] $computer.SID
-
-# Create a new access control entry to allow access to the OU
+# Include every configured site server that may publish to this container.
+$siteServers = @(
+    $env:COMPUTERNAME
+    '{{ ludus_sccm_passive_hostname | default("") }}'
+    '{{ ludus_sccm_secondary_siteserver_fqdn | default("") }}'
+) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique
 $nullGUID = [guid]'00000000-0000-0000-0000-000000000000'
-
-$ace = new-object System.DirectoryServices.ActiveDirectoryAccessRule($sid, "GenericAll", "Allow", "All",$nullGUID)
-
-# Add the ACE to the ACL, then set the ACL to save the changes
-$acl.AddAccessRule($ace)
-Set-acl -aclobject $acl "ad:CN=System Management,CN=System,$root"
+$changed = $false
+foreach ($server in $siteServers) {
+    if ($server -notmatch '^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*$') { throw "Invalid site server hostname: $server" }
+    $dnsName = if ($server.Contains('.')) { $server } else { "$server.{{ ludus_domain_fqdn }}" }
+    $computers = @(Get-ADComputer -Filter { DNSHostName -eq $dnsName })
+    if ($computers.Count -ne 1) { throw "Expected one computer account for $dnsName; found $($computers.Count)." }
+    $sid = [System.Security.Principal.SecurityIdentifier]$computers[0].SID
+    $existing = @($acl.Access | Where-Object {
+        $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]) -eq $sid -and
+        $_.AccessControlType -eq 'Allow' -and $_.InheritanceType -eq 'All' -and
+        ($_.ActiveDirectoryRights -band [System.DirectoryServices.ActiveDirectoryRights]::GenericAll) -eq [System.DirectoryServices.ActiveDirectoryRights]::GenericAll
+    })
+    if ($existing.Count) { Write-Host "Publishing permission already present: $dnsName"; continue }
+    $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule($sid, 'GenericAll', 'Allow', 'All', $nullGUID)
+    $acl.AddAccessRule($ace)
+    $changed = $true
+    Write-Host "Publishing permission target: $dnsName ($sid)"
+}
+if ($changed -and $PSCmdlet.ShouldProcess("CN=System Management,CN=System,$root", "Grant publishing permissions to configured site servers")) {
+    Set-Acl -AclObject $acl "ad:CN=System Management,CN=System,$root"
+}

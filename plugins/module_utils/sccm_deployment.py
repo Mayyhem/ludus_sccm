@@ -20,6 +20,7 @@ PREREQUISITES = {
     "winpe_version_prefix": "10.1.26100.",
     "winpe_url": "https://download.microsoft.com/download/a4a79e7a-f085-41c4-aebf-2538fd000790/adkwinpeaddons/adkwinpesetup.exe",
     "vc_url": "https://aka.ms/vs/17/release/vc_redist.x64.exe",
+    "vc_x86_url": "https://aka.ms/vs/17/release/vc_redist.x86.exe",
 }
 
 

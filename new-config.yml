@@ -56,6 +56,7 @@ ludus:
     role_vars: &sccm_version_settings
       ludus_sccm_target_version: "latest"
       ludus_sccm_install_hotfixes: true
+      ludus_sccm_enable_enhanced_http: true
       # Also inspect consoles on lab machines that are not registered clients.
       ludus_sccm_component_hosts:
         - dc.mayyhem.com
@@ -258,6 +259,19 @@ ludus:
       ludus_sccm_sitecode: CAS
       ludus_sccm_sitename: Central Administration Site
       ludus_sccm_child_site_server_hostname: 'ps1-pss'
+      # Lab RBAC and PS1-DEV's primary user (user device affinity) for collector testing.
+      ludus_sccm_custom_security_roles:
+        - name: Custom Role
+          copy_from: Read-only Analyst
+      ludus_sccm_administrative_users:
+        - user: networkaccess
+          roles: [Full Administrator]
+        - user: roanalyst
+          password: Password123
+          roles: [Read-only Analyst]
+      ludus_sccm_primary_users:
+        - device: PS1-DEV
+          user: domainuser
       ludus_sccm_win_sccm_config_default_template: ExtendPrimaryToCAS.ini.j2
       ludus_sccm_site_server_hostname: 'cas-pss'
       ludus_sccm_sql_server_hostname: 'cas-db'
@@ -315,6 +329,13 @@ ludus:
             role: mayyhem.ludus_sccm.windows_base
           - vm_name: "{{ range_id }}-ps1-pss"
             role: mayyhem.ludus_sccm.windows_base
+      # The passive server needs administrative access to every site system.
+      - name: mayyhem.ludus_sccm.add_accounts_to_admins
+        depends_on:
+          - vm_name: "{{ range_id }}-ps1-db"
+            role: mayyhem.ludus_sccm.windows_base
+          - vm_name: "{{ range_id }}-ps1-psv"
+            role: mayyhem.ludus_sccm.windows_base
         # Wait for the site database server and passive site server to be ready before installing SQL and adding passive site server account as SQL sysadmin
       - name: mayyhem.ludus_sccm.install_site_database
         depends_on:
@@ -328,6 +349,7 @@ ludus:
       ludus_sccm_sql_server_hostname: 'ps1-db'
       # Add passive site server account as SQL sysadmin
       ludus_sccm_sql_additional_sysadmin_accounts: 'MAYYHEM\domainadmin MAYYHEM\ps1-psv$'
+      ludus_sccm_add_accounts_to_admins: 'ps1-psv$'
 
   # PS1-LIB: Content Library Server
   - vm_name: "{{ range_id }}-ps1-lib"
@@ -374,6 +396,10 @@ ludus:
             role: mayyhem.ludus_sccm.add_accounts_to_admins
     role_vars:
       <<: *sccm_version_settings
+      # Service the old Server 2022 SMB baseline before SCCM uses the remote library.
+      ludus_sccm_windows_update_accept_list:
+        - KB5122882
+        - KB5126655
       ludus_sccm_site_server_hostname: 'ps1-pss'
       ludus_sccm_add_accounts_to_admins: "ps1-psv$"
 
@@ -665,6 +691,21 @@ ludus:
         depends_on:
           - vm_name: "{{ range_id }}-ps1-pss"
             role: mayyhem.ludus_sccm.install_primary_site    
+          # Apply passive-server permissions before waiting for HA validation.
+          - vm_name: "{{ range_id }}-ps1-db"
+            role: mayyhem.ludus_sccm.add_accounts_to_admins
+          - vm_name: "{{ range_id }}-ps1-lib"
+            role: mayyhem.ludus_sccm.add_accounts_to_admins
+          - vm_name: "{{ range_id }}-ps1-dp"
+            role: mayyhem.ludus_sccm.add_accounts_to_admins
+          - vm_name: "{{ range_id }}-ps1-mp"
+            role: mayyhem.ludus_sccm.add_accounts_to_admins
+          - vm_name: "{{ range_id }}-ps1-sms"
+            role: mayyhem.ludus_sccm.add_accounts_to_admins
+          - vm_name: "{{ range_id }}-ps1-sec"
+            role: mayyhem.ludus_sccm.add_accounts_to_admins
+          - vm_name: "{{ range_id }}-ps1-pss"
+            role: mayyhem.ludus_sccm.add_accounts_to_admins
           - vm_name: "{{ range_id }}-ps1-lib"
             role: mayyhem.ludus_sccm.windows_base
           - vm_name: "{{ range_id }}-ps1-lib"
@@ -684,6 +725,10 @@ ludus:
             role: mayyhem.ludus_sccm.add_pss_to_admins
     role_vars:
       <<: *sccm_version_settings
+      # Service the old Server 2022 SMB baseline before SCCM uses the remote library.
+      ludus_sccm_windows_update_accept_list:
+        - KB5122882
+        - KB5126655
       # This is a child site of CAS
       ludus_sccm_parent_sitecode: 'CAS'
       ludus_sccm_parent_site_server_hostname: 'cas-pss'

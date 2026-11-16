@@ -1,0 +1,89 @@
+---
+# Guest restarts require the operator's maintenance authorization.
+# Preview defaults to true and never restarts a guest.
+- name: Require completed servicing before restarting managed clients
+  hosts: "{{ restart_root_host }}"
+  gather_facts: false
+  any_errors_fatal: true
+  become: true
+  become_method: runas
+  become_user: SYSTEM
+  tasks:
+    - name: Verify the expected root and all current sites without active updates
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$Computer, [string]$Code, [string[]]$Codes, [string]$Version)
+          $ErrorActionPreference='Stop'
+          $Ansible.Changed=$false
+          if($env:COMPUTERNAME -ine $Computer){throw 'Unexpected root guest.'}
+          $sites=@(Get-CimInstance -Namespace "root\SMS\site_$Code" -ClassName SMS_Site)
+          if($sites.Count -ne $Codes.Count -or @($sites | Where-Object {$_.SiteCode -notin $Codes -or $_.Status -ne 1 -or [version]$_.Version -ne [version]$Version}).Count){throw 'The expected sites must all be active at the selected version.'}
+          $active=@(Get-CimInstance -Namespace "root\SMS\site_$Code" -ClassName SMS_CM_UpdatePackageSiteStatus | Where-Object {$_.State -ge 196609 -and $_.State -le 196629 -and $_.State -ne 196612})
+          if($active.Count){throw 'Native site servicing is active.'}
+          $Ansible.Result=@{Root=$env:COMPUTERNAME;Sites=@($sites.SiteCode);ActiveUpdates=0}
+        parameters:
+          Computer: "{{ restart_root_computer }}"
+          Code: "{{ restart_root_code }}"
+          Codes: "{{ restart_site_codes }}"
+          Version: "{{ restart_site_version }}"
+
+- name: Complete only outstanding native client restart requests
+  hosts: "{{ restart_client_hosts }}"
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  become: true
+  become_method: runas
+  become_user: SYSTEM
+  tasks:
+    - name: Copy the current client readiness helper
+      ansible.windows.win_copy:
+        src: ../roles/sccm_common/files/SccmDeployment.psm1
+        dest: C:\ludus\sccm\SccmDeployment.psm1
+    - name: Verify the allowed managed-client identity and completed native setup
+      ansible.windows.win_powershell:
+        script: |
+          param([string[]]$Computers, [string]$Domain, [string]$Code, [string]$Version)
+          $ErrorActionPreference='Stop'
+          $Ansible.Changed=$false
+          if($env:COMPUTERNAME -notin $Computers -or (Get-CimInstance Win32_ComputerSystem).Domain -ine $Domain){throw 'Unexpected managed-client guest.'}
+          Import-Module 'C:\ludus\sccm\SccmDeployment.psm1' -Force
+          $state=Get-SccmClientState
+          if([version]$state.Version -ne [version]$Version -or $state.AssignedSite -ne $Code){throw 'Client version or assigned site differs from the approved scope.'}
+          if($state.SetupRunning -or @(Get-Process srvboot,setup,setupwpf -ErrorAction SilentlyContinue).Count -or (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\InProgress')){throw 'Native installation work is still active.'}
+          $Ansible.Result=@{Computer=$env:COMPUTERNAME;State=$state;NeedsRestart=$state.RebootRequired}
+        parameters:
+          Computers: "{{ restart_client_computers }}"
+          Domain: "{{ restart_client_domain }}"
+          Code: "{{ restart_client_code }}"
+          Version: "{{ restart_client_version }}"
+      register: client_restart_guard
+    - ansible.builtin.debug:
+        msg:
+          Preview: "{{ restart_preview | default(true) | bool }}"
+          Client: "{{ client_restart_guard.result }}"
+    - name: Normally restart only a client with an outstanding native request
+      ansible.windows.win_reboot:
+        msg: Complete the SCCM client installer's required restart.
+        reboot_timeout: 900
+        post_reboot_delay: 30
+      when:
+        - not (restart_preview | default(true) | bool)
+        - client_restart_guard.result.NeedsRestart | bool
+    - name: Verify the production client service and assignment after restart
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$Version, [string]$Code)
+          $ErrorActionPreference='Stop'
+          $Ansible.Changed=$false
+          Import-Module 'C:\ludus\sccm\SccmDeployment.psm1' -Force
+          $state=Get-SccmClientState
+          $Ansible.Result=@{Computer=$env:COMPUTERNAME;State=$state;Ready=(Test-SccmClientReady $state $Version $Code)}
+        parameters:
+          Version: "{{ restart_client_version }}"
+          Code: "{{ restart_client_code }}"
+      register: restarted_client
+      until: restarted_client.result.Ready | default(false) | bool
+      retries: 60
+      delay: 10
+      when: not (restart_preview | default(true) | bool)

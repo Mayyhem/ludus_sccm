@@ -8,6 +8,10 @@ ludus_iso_path: "/var/lib/vz/template/iso"
 # Ludus stages this exact filename in the Proxmox ISO store. Override to
 # point at whatever Win11 ISO your controller has staged.
 ludus_sccm_pxe_iso_filename: "22621.525.220925-0207.ni_release_svc_refresh_CLIENTENTERPRISEEVAL_OEMRET_x64FRE_en-us.iso"
+# Optionally acquire the ISO on the guest instead of requiring controller media.
+# Supply the exact SHA-256 of the selected ISO whenever a URL is configured.
+ludus_sccm_pxe_iso_url: ""
+ludus_sccm_pxe_iso_checksum: ""
 #--------------------------Network Access Account--------------------------------
 ludus_sccm_configure_naa: true
 ludus_sccm_naa_username: 'networkaccess'

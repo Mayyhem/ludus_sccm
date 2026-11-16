@@ -4,7 +4,10 @@ module: force_gpupdate
 short_description: Force gpupdate on Certain OUs
 version_added: "1.0.0"
 
-description: Force gpupdate on Certain OUs
+description:
+- Refresh computer policy on the selected domain computers.
+- Uses PowerShell remoting for remote computers and a local gpupdate for the calling computer.
+- WinRM must be reachable with the calling domain account. Check mode lists targets without refreshing policy.
 
 options:
     workstations:

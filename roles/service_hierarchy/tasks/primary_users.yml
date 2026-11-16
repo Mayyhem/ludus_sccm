@@ -1,0 +1,42 @@
+---
+# Runs after completion, so every listed device is an installed, assigned client
+# and every listed user has been discovered before SCCM is asked to link them.
+- name: Set the requested primary users of client devices
+  ansible.windows.win_powershell:
+    script: |
+      param([string]$Directory, [string]$Code, [string]$Domain, [object[]]$Assignments, [int]$TimeoutMinutes)
+      Import-Module "$Directory\SccmDeployment.psm1" -Force
+      Set-SccmLog "$Directory\hierarchy-update.log"
+      $results = @()
+      try {
+          Connect-SccmSite $Code $env:COMPUTERNAME
+          foreach ($assignment in $Assignments) {
+              $device = [string]$assignment.device
+              $user = [string]$assignment.user
+              if (-not $device -or -not $user) { Stop-SccmWork 'Each ludus_sccm_primary_users entry needs a device and a user.' }
+              # A bare account name belongs to the lab domain.
+              if ($user -notlike '*\*') { $user = "$Domain\$user" }
+              if (-not (Get-CMDevice -Name $device -Fast)) { Stop-SccmWork "SCCM has no device named $device." }
+              if (-not (Get-CMUser -Name $user)) { Stop-SccmWork "SCCM has not discovered the user $user." }
+              $hasUser = { [bool](@(Get-CMUserDeviceAffinity -DeviceName $device) | Where-Object { $_.UniqueUserName -ieq $user }) }
+              $added = $false
+              if (& $hasUser) {
+                  Write-SccmLog "$user is already a primary user of $device."
+              } else {
+                  Write-SccmLog "Making $user a primary user of $device."
+                  Add-CMUserAffinityToDevice -DeviceName $device -UserName $user -ErrorAction Stop
+                  $added = $true
+              }
+              Wait-SccmCondition -Test $hasUser -Description "$user is a primary user of $device" -TimeoutMinutes $TimeoutMinutes -PollSeconds 15 -RetryReadErrors
+              $results += [pscustomobject]@{Device = $device; User = $user; Added = $added}
+          }
+      } finally { Set-Location $env:SystemDrive\ }
+      $Ansible.Changed = [bool]($results | Where-Object Added)
+      $Ansible.Result = @($results)
+    parameters:
+      Directory: '{{ ludus_sccm_work_directory }}'
+      Code: '{{ ludus_sccm_sitecode }}'
+      Domain: '{{ ludus_domain_netbios_name }}'
+      Assignments: '{{ ludus_sccm_primary_users }}'
+      TimeoutMinutes: 15
+  register: ludus_sccm_primary_user_result

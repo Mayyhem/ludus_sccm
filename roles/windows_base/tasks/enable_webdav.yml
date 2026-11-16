@@ -20,7 +20,20 @@
 
 - name: Reboot after WebDAV installation (Server only)
   ansible.windows.win_reboot:
-  when: 
+    reboot_timeout: 900
+    post_reboot_delay: 30
+    # This is the first boot with auto-logon enabled, so Windows builds the
+    # domain admin profile while WinRM is already answering. A connection in
+    # that window can fail as unreachable ("registry key marked for
+    # deletion"), which retries cannot catch. Return only after the logon has
+    # settled; give up waiting for the shell after five minutes of uptime.
+    test_command: |
+      $uptime = ((Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime).TotalSeconds
+      if ($uptime -lt 120) { exit 1 }
+      $autoLogon = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon').AutoAdminLogon -eq '1'
+      if ($autoLogon -and $uptime -lt 300 -and -not (Get-CimInstance Win32_Process -Filter "Name='explorer.exe'")) { exit 1 }
+      exit 0
+  when:
     - is_windows_server | bool
     - webdav_install.changed
 

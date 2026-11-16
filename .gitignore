@@ -5,3 +5,4 @@ mayyhem*.tar.gz
 __pycache__/
 .ruff_cache/
 .tmp/
+/AGENTS.md

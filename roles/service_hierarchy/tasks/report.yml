@@ -1,0 +1,48 @@
+---
+# Copies servicing reports to the controller without ever failing the deployment.
+# An empty ludus_sccm_artifacts_directory turns the copy off on purpose.
+- name: Check that the controller report destination can be created
+  ansible.builtin.file:
+    path: '{{ ludus_sccm_artifacts_directory }}/{{ inventory_hostname }}'
+    state: directory
+    mode: '0750'
+  delegate_to: localhost
+  become: false
+  vars:
+    ansible_connection: local
+    ansible_become: false
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  register: ludus_sccm_report_destination
+  failed_when: false
+  when: ludus_sccm_artifacts_directory | default('') | length > 0
+- name: Record whether the controller report destination is usable
+  ansible.builtin.set_fact:
+    ludus_sccm_report_destination_ready: >-
+      {{ ludus_sccm_report_destination is not skipped
+         and (ludus_sccm_report_destination.state | default('')) == 'directory' }}
+- name: Fetch servicing evidence to the Ludus controller
+  ansible.builtin.fetch:
+    src: '{{ item.path }}'
+    dest: '{{ ludus_sccm_artifacts_directory }}/{{ inventory_hostname }}/'
+    flat: true
+  loop: '{{ ludus_sccm_evidence_files.files | default([]) }}'
+  register: ludus_sccm_report_fetch
+  ignore_errors: true
+  when: ludus_sccm_report_destination_ready | bool
+  vars:
+    ansible_become: false
+- name: Explain where to find the reports and recovery material
+  ansible.builtin.debug:
+    msg: >-
+      {% if ludus_sccm_report_destination is skipped %}Controller report copy is turned off
+      (ludus_sccm_artifacts_directory is empty). Reports are in {{ ludus_sccm_work_directory }} on this server.
+      {%- elif not (ludus_sccm_report_destination_ready | bool) %}WARNING: reports were not copied because the controller
+      cannot create {{ ludus_sccm_artifacts_directory }}/{{ inventory_hostname }}
+      ({{ ludus_sccm_report_destination.msg | default('unknown error') }}). Reports are in
+      {{ ludus_sccm_work_directory }} on this server.
+      {%- elif (ludus_sccm_report_fetch.results | default([]) | selectattr('failed', 'defined') | selectattr('failed') | list) %}WARNING:
+      some reports could not be copied to {{ ludus_sccm_artifacts_directory }}/{{ inventory_hostname }}/. All reports
+      are in {{ ludus_sccm_work_directory }} on this server.
+      {%- else %}Reports copied to {{ ludus_sccm_artifacts_directory }}/{{ inventory_hostname }}/.
+      {%- endif %} SQL backups stay on their SQL hosts; CD.Latest copies stay in its recovery subdirectory.
+  register: ludus_sccm_report_message

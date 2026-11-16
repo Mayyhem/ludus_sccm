@@ -26,6 +26,15 @@
       - Web-Scripting-Tools
       - Web-Mgmt-Service
     state: present
+  register: ludus_sccm_provider_features
+
+- name: Restart after SMS Provider Windows feature changes
+  ansible.windows.win_reboot:
+    reboot_timeout: 900
+    post_reboot_delay: 20
+  when:
+    - not ansible_check_mode
+    - ludus_sccm_provider_features.changed or (ludus_sccm_provider_features.reboot_required | default(false) | bool)
 
 - name: Prepare the SMS Provider prerequisites
   ansible.builtin.include_role:

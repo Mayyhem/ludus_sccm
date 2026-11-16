@@ -12,13 +12,18 @@
     sccm_download_url: "{{ ludus_sccm_selected_deployment.prerequisites.odbc_url }}"
     sccm_download_filename: 'odbc-18.6.2.1.msi'
 
-- name: Download the supported Visual C++ runtime
+- name: Download both supported Visual C++ runtimes
   ansible.builtin.include_role:
     name: mayyhem.ludus_sccm.sccm_common
     tasks_from: download
   vars:
-    sccm_download_url: "{{ ludus_sccm_selected_deployment.prerequisites.vc_url }}"
-    sccm_download_filename: 'vc-2022-x64.exe'
+    sccm_download_url: "{{ item.url }}"
+    sccm_download_filename: "{{ item.filename }}"
+  loop:
+    - url: "{{ ludus_sccm_selected_deployment.prerequisites.vc_url }}"
+      filename: 'vc-2022-x64.exe'
+    - url: "{{ ludus_sccm_selected_deployment.prerequisites.vc_x86_url }}"
+      filename: 'vc-2022-x86.exe'
 
 - name: Download supported ADK and Windows PE installers
   ansible.builtin.include_role:

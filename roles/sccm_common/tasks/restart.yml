@@ -1,0 +1,11 @@
+---
+- name: Require the automatic restart policy
+  ansible.builtin.assert:
+    that: ludus_sccm_automatic_reboots | bool
+    fail_msg: Native setup requires guest restarts. Automatic restarts are disabled; restart the identified guests and rerun deployment.
+- name: Restart checkpointed guests one at a time
+  ansible.builtin.include_tasks: restart_one.yml
+  loop: "{{ sccm_restart_requests }}"
+  loop_control:
+    loop_var: sccm_restart_request
+    label: "{{ sccm_restart_request.Computer }} ({{ sccm_restart_request.Kind }})"

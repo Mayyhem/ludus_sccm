@@ -21,16 +21,45 @@
     path: "{{ ludus_sccm_host_path }}\\win11.iso"
   register: file_host_check
 
+- name: Require an exact checksum for URL-sourced PXE media
+  ansible.builtin.assert:
+    that:
+      - ludus_sccm_pxe_iso_checksum is match('^[a-fA-F0-9]{64}$')
+    fail_msg: Set ludus_sccm_pxe_iso_checksum to the selected ISO's SHA-256 when using ludus_sccm_pxe_iso_url.
+  when: ludus_sccm_pxe_iso_url | length > 0
+
+- name: Download and verify configured PXE ISO on the site server
+  ansible.windows.win_get_url:
+    url: "{{ ludus_sccm_pxe_iso_url }}"
+    dest: "{{ ludus_sccm_host_path }}\\win11.iso"
+    checksum: "{{ ludus_sccm_pxe_iso_checksum }}"
+    checksum_algorithm: sha256
+    force: false
+    url_timeout: 600
+  async: 7200
+  poll: 30
+  register: ludus_sccm_pxe_iso_download
+  when: ludus_sccm_pxe_iso_url | length > 0
+
 - name: Copy ISO file to Site Server
   ansible.windows.win_copy:
     src: "{{ ludus_iso_path }}/{{ ludus_sccm_pxe_iso_filename }}"
     dest: "{{ ludus_sccm_host_path }}\\win11.iso"
-  when: not file_host_check.stat.exists
+  when:
+    - ludus_sccm_pxe_iso_url | length == 0
+    - not file_host_check.stat.exists
 
 - name: Check if WIM File Exists on Site Server
   ansible.windows.win_stat:
     path: 'C:\Program Files\Microsoft Configuration Manager\OSD\Images\win11.wim'
   register: wim_host_check
+
+- name: Refuse to reuse a cached OS image after changing its ISO
+  ansible.builtin.assert:
+    that:
+      - not wim_host_check.stat.exists or not (ludus_sccm_pxe_iso_download.changed | default(false))
+    fail_msg: The selected ISO changed but win11.wim already exists. Update the existing OS image through Configuration Manager before reusing this source.
+  when: ludus_sccm_pxe_iso_url | length > 0
 
 - name: Mount ISO to Site Server
   community.windows.win_disk_image:

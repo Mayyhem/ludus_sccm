@@ -1,0 +1,63 @@
+---
+# One normal Executive restart after completed native secondary recovery.
+# Preview is the default. No SQL service, session, identity, or queue is changed.
+- name: Verify completed secondary recovery before retrying native reporting
+  hosts: "{{ secondary_reporting_host }}"
+  gather_facts: false
+  any_errors_fatal: true
+  become: true
+  become_method: runas
+  become_user: SYSTEM
+  tasks:
+    - name: Require exact guest identity, current package and finished initialization
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$Computer,[string]$Uuid,[string]$Code,[string]$Parent,[string]$Instance,[string]$Guid,[int]$Build)
+          $ErrorActionPreference='Stop'
+          $Ansible.Changed=$false
+          if($env:COMPUTERNAME -ne $Computer -or (Get-CimInstance Win32_ComputerSystemProduct).UUID -ine $Uuid){throw 'Wrong secondary guest.'}
+          if($Code -notmatch '^[A-Za-z0-9]{3}$' -or $Parent -notmatch '^[A-Za-z0-9]{3}$' -or $Instance -notmatch '^[A-Za-z][A-Za-z0-9_]{0,15}$'){throw 'Invalid scoped database identity.'}
+          if(@(Get-Process setup,setupwpf,SMS_BOOTSTRAP,srvboot,msiexec -ErrorAction SilentlyContinue).Count){throw 'Native installation is still active.'}
+          $setup=Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\SMS\Setup'
+          if(([version]$setup.'Full Version').Build -ne $Build){throw 'Secondary version differs from the selected release.'}
+          $service=Get-CimInstance Win32_Service -Filter "Name='SMS_EXECUTIVE'"
+          if($service.State -ne 'Running' -or $service.StartName -ne 'LocalSystem' -or $service.StartMode -ne 'Auto'){throw 'Unexpected Executive state or identity.'}
+          Import-Module 'C:\ludus\sccm\SccmDeployment.psm1' -Force
+          $db="CM_$Code";$server="localhost\$Instance";$package=([guid]$Guid).ToString()
+          $installed=Invoke-SccmSqlQuery $server "SELECT p.State FROM [$db].dbo.CM_UpdatePackageSiteStatus p JOIN [$db].dbo.SC_SiteDefinition s ON s.SiteNumber=p.SiteNumber WHERE s.SiteCode='$Code' AND p.PackageGuid='$package'"
+          if($installed.Rows.Count -ne 1 -or $installed.Rows[0].State -ne 196612){throw 'The selected package is not installed locally.'}
+          $groups=Invoke-SccmSqlQuery $server "WITH latest AS (SELECT ReplicationGroup,InitializationStatus,InitializationPercent,ROW_NUMBER() OVER(PARTITION BY ReplicationGroup ORDER BY CreatedTime DESC) AS rn FROM [$db].dbo.RCM_DrsInitializationTracking WHERE SiteRequesting='$Code' AND SiteFulfilling='$Parent') SELECT ReplicationGroup,InitializationStatus,InitializationPercent FROM latest WHERE rn=1"
+          if($groups.Rows.Count -ne 3 -or @($groups.Rows | Where-Object {$_.InitializationStatus -ne 6 -or $_.InitializationPercent -ne 100}).Count){throw 'All three native secondary initialization groups must be complete.'}
+          $Ansible.Result=@{Computer=$env:COMPUTERNAME;Uuid=$Uuid;InstalledPackage=$package;InitializationGroups=@($groups.Rows | Select-Object ReplicationGroup,InitializationStatus,InitializationPercent);ServiceToRestart='SMS_EXECUTIVE';SqlServiceAction=$false}
+        parameters:
+          Computer: "{{ secondary_reporting_computer }}"
+          Uuid: "{{ secondary_reporting_uuid }}"
+          Code: "{{ secondary_reporting_code }}"
+          Parent: "{{ secondary_reporting_parent }}"
+          Instance: "{{ secondary_reporting_instance }}"
+          Guid: "{{ secondary_reporting_package_guid }}"
+          Build: "{{ secondary_reporting_build | int }}"
+        depth: 5
+      register: secondary_reporting_guard
+    - ansible.builtin.debug:
+        var: secondary_reporting_guard.result
+    - name: Preserve and verify a fresh current secondary backup before the normal retry
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$Code,[string]$Instance)
+          Import-Module 'C:\ludus\sccm\SccmDeployment.psm1' -Force
+          $Ansible.Result=Backup-SccmDatabase "localhost\$Instance" "CM_$Code"
+          $Ansible.Changed=$true
+        parameters:
+          Code: "{{ secondary_reporting_code }}"
+          Instance: "{{ secondary_reporting_instance }}"
+      register: reporting_retry_backup
+      when: not (secondary_reporting_preview | default(true) | bool)
+    - ansible.builtin.debug:
+        var: reporting_retry_backup.result
+      when: not (secondary_reporting_preview | default(true) | bool)
+    - name: Normally restart only the secondary Executive once
+      ansible.windows.win_service:
+        name: SMS_EXECUTIVE
+        state: restarted
+      when: not (secondary_reporting_preview | default(true) | bool)

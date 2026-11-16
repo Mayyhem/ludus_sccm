@@ -31,3 +31,21 @@
         name: mayyhem.ludus_sccm.plan_sccm_version
       vars:
         ludus_sccm_target_version: "2509"
+
+    - name: Plan newly broad 2609 from the installed 2509 hierarchy
+      mayyhem.ludus_sccm.sccm_version_plan:
+        target_version: "2609"
+        current_site_versions:
+          CAS: "5.00.9141.1000"
+          PS1: "5.00.9141.1000"
+          SEC: "5.00.9141.1000"
+      register: current_release
+
+    - name: Verify 2609 uses the supported direct route and existing prerequisites
+      ansible.builtin.assert:
+        that:
+          - not current_release.changed
+          - current_release.plan.target_site_build == 9152
+          - current_release.plan.upgrade_versions == ['2609']
+          - current_release.deployment.baseline_version == '2509'
+          - current_release.deployment.prerequisites.odbc_version == '18.6.2.1'

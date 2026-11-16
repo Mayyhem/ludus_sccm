@@ -1,17 +1,34 @@
 ---
-- name: "Service the hierarchy to SCCM {{ sccm_release }}"
-  ansible.windows.win_powershell:
-    script: |
-      param([string]$Directory, [string]$Code, [string]$Release, [int]$Build, [bool]$AllowWarnings, [int]$Timeout)
-      $result = & "$Directory\Update-SccmRelease.ps1" -WorkDirectory $Directory -Provider $env:COMPUTERNAME -SiteCode $Code -TargetRelease $Release -TargetBuild $Build -AllowWarnings $AllowWarnings -TimeoutMinutes $Timeout
-      $Ansible.Changed = $result.Changed
-      $Ansible.Result = $result
-    parameters:
-      Directory: "{{ ludus_sccm_work_directory }}"
-      Code: "{{ ludus_sccm_sitecode }}"
-      Release: "{{ sccm_release }}"
-      Build: "{{ ludus_sccm_selected_deployment.release_builds[sccm_release] | int }}"
+- name: Match the servicing console to the currently installed root
+  ansible.builtin.include_tasks: console.yml
+- name: "Service CAS and primary sites to SCCM {{ sccm_release }}"
+  ansible.builtin.include_role:
+    name: mayyhem.ludus_sccm.sccm_common
+    tasks_from: run_phase.yml
+    public: true
+  vars:
+    sccm_phase_name: "Service CAS and primary sites to SCCM {{ sccm_release }}"
+    sccm_phase_script: Update-SccmRelease.ps1
+    sccm_phase_arguments:
+      SiteCode: "{{ ludus_sccm_sitecode }}"
+      TargetRelease: "{{ sccm_release }}"
+      TargetBuild: "{{ ludus_sccm_selected_deployment.release_builds[sccm_release] | int }}"
       AllowWarnings: "{{ ludus_sccm_allow_prerequisite_warnings | bool }}"
-      Timeout: "{{ ludus_sccm_update_timeout_minutes | int }}"
-  async: 86400
-  poll: 30
+      TimeoutMinutes: "{{ ludus_sccm_update_timeout_minutes | int }}"
+      ParentsOnly: true
+- name: Match the servicing console to the newly installed root
+  ansible.builtin.include_tasks: console.yml
+- name: "Reconcile secondary and passive servers after SCCM {{ sccm_release }}"
+  ansible.builtin.include_role:
+    name: mayyhem.ludus_sccm.sccm_common
+    tasks_from: run_phase.yml
+    public: true
+  vars:
+    sccm_phase_name: "Reconcile secondary and passive servers after SCCM {{ sccm_release }}"
+    sccm_phase_script: Update-SccmRelease.ps1
+    sccm_phase_arguments:
+      SiteCode: "{{ ludus_sccm_sitecode }}"
+      TargetRelease: "{{ sccm_release }}"
+      TargetBuild: "{{ ludus_sccm_selected_deployment.release_builds[sccm_release] | int }}"
+      AllowWarnings: "{{ ludus_sccm_allow_prerequisite_warnings | bool }}"
+      TimeoutMinutes: "{{ ludus_sccm_update_timeout_minutes | int }}"

@@ -1,0 +1,6 @@
+---
+- name: Refresh the local site console with the shared deployment helper
+  ansible.builtin.include_role:
+    name: mayyhem.ludus_sccm.sccm_common
+    tasks_from: console.yml
+    public: true

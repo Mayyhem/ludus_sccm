@@ -1,0 +1,47 @@
+---
+- name: Require an explicit list of Windows security KBs
+  ansible.builtin.assert:
+    that:
+      - ludus_sccm_windows_update_accept_list is sequence
+      - ludus_sccm_windows_update_accept_list is not string
+      - ludus_sccm_windows_update_accept_list | length > 0
+      - ludus_sccm_windows_update_accept_list | select('match', '^KB[0-9]+$') | list | length == ludus_sccm_windows_update_accept_list | length
+    fail_msg: Supply a nonempty list of exact KB numbers for optional OS servicing.
+
+- name: Install only the explicitly selected Microsoft OS security updates
+  ansible.windows.win_updates:
+    state: installed
+    server_selection: windows_update
+    category_names:
+      - SecurityUpdates
+    accept_list: '{{ ludus_sccm_windows_update_accept_list }}'
+    skip_optional: true
+    reboot: true
+    reboot_timeout: 1800
+  become: true
+  become_method: runas
+  become_user: SYSTEM
+  register: ludus_sccm_windows_update_result
+
+# win_updates succeeds when an accepted KB is not offered (superseded or another
+# category). Require each KB in Windows Update history or the installed hotfixes;
+# a later cumulative update removes an earlier one from Get-HotFix but not history.
+- name: Require every selected KB to be installed
+  ansible.windows.win_powershell:
+    script: |
+      param([string[]]$Kbs)
+      $ErrorActionPreference = 'Stop'
+      $Ansible.Changed = $false
+      $installed = @(Get-HotFix | ForEach-Object HotFixID)
+      $searcher = (New-Object -ComObject Microsoft.Update.Session).CreateUpdateSearcher()
+      $count = $searcher.GetTotalHistoryCount()
+      $history = @()
+      if ($count) { $history = @($searcher.QueryHistory(0, $count) | Where-Object ResultCode -eq 2 | ForEach-Object Title) }
+      $missing = @($Kbs | Where-Object { $kb = $_; $kb -notin $installed -and -not @($history | Where-Object { $_ -match "\b$kb\b" }).Count })
+      if ($missing.Count) { throw "Requested Windows updates were not installed: $($missing -join ', '). They may be superseded or not offered as security updates; update ludus_sccm_windows_update_accept_list." }
+      $Ansible.Result = @{Verified = $Kbs}
+    parameters:
+      Kbs: '{{ ludus_sccm_windows_update_accept_list }}'
+  become: true
+  become_method: runas
+  become_user: SYSTEM

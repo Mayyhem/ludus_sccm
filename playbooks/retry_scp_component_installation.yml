@@ -1,0 +1,134 @@
+---
+# Preview is the default. Retry native installation without editing its queues,
+# database state, service credentials, or component registration.
+- name: Verify the completed site and idle component manager
+  hosts: "{{ retry_site_host }}"
+  gather_facts: false
+  any_errors_fatal: true
+  become: true
+  become_method: runas
+  become_user: SYSTEM
+  tasks:
+    - &site_guard
+      name: Require completed local servicing and no active bootstrap work
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$Computer, [string]$SqlServer, [string]$Database, [string]$Guid, [int]$Build)
+          $ErrorActionPreference='Stop'
+          $Ansible.Changed=$false
+          if($env:COMPUTERNAME -ne $Computer -or $Database -notmatch '^CM_[A-Z0-9]{3}$'){throw 'Unexpected site identity.'}
+          $package=([guid]$Guid).ToString()
+          $code=$Database.Substring(3)
+          Import-Module 'C:\ludus\sccm\SccmDeployment.psm1' -Force
+          $setup=Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\SMS\Setup'
+          if(([version]$setup.'Full Version').Build -ne $Build){throw 'The local site has not reached the selected release.'}
+          $state=Invoke-SccmSqlQuery $SqlServer "SELECT u.State FROM [$Database].dbo.CM_UpdatePackageSiteStatus u JOIN [$Database].dbo.ServerData s ON s.ID=u.SiteNumber WHERE u.PackageGuid='$package' AND s.SiteCode='$code'"
+          if($state.Rows.Count -ne 1 -or $state.Rows[0].State -ne 196612){throw 'The local site update must be installed.'}
+          $active=Invoke-SccmSqlQuery $SqlServer "SELECT COUNT(*) AS ActiveUpdates FROM [$Database].dbo.CM_UpdatePackageSiteStatus u JOIN [$Database].dbo.ServerData s ON s.ID=u.SiteNumber WHERE s.SiteCode='$code' AND u.State BETWEEN 196609 AND 196629 AND u.State<>196612"
+          if($active.Rows[0].ActiveUpdates -ne 0){throw 'Another update is active at the local site.'}
+          $service=Get-CimInstance Win32_Service -Filter "Name='SMS_SITE_COMPONENT_MANAGER'"
+          if($service.State -ne 'Running' -or $service.StartName -ne 'LocalSystem'){throw 'Unexpected component-manager identity or state.'}
+          $bootstrap=@(Get-CimInstance Win32_Service | Where-Object {$_.Name -like 'SMS_SERVER_BOOTSTRAP*' -and $_.State -ne 'Stopped'})
+          if($bootstrap.Count -or @(Get-Process srvboot,setup,setupwpf,msiexec -ErrorAction SilentlyContinue).Count){throw 'Native installation work is active.'}
+          $tail=@(Get-Content (Join-Path $setup.'Installation Directory' 'Logs\sitecomp.log') -Tail 2)
+          if($tail[-1] -notmatch 'Waiting for changes.*sitecomp.box'){throw 'The component manager is not idle in its native polling wait.'}
+          $Ansible.Result=@{Computer=$env:COMPUTERNAME;ReleaseState=196612;Idle=$true;ServiceToRestart='SMS_SITE_COMPONENT_MANAGER'}
+        parameters:
+          Computer: "{{ retry_site_computer }}"
+          SqlServer: "{{ retry_sql_server }}"
+          Database: "{{ retry_database }}"
+          Guid: "{{ retry_package_guid }}"
+          Build: "{{ retry_target_build | int }}"
+      register: component_root_guard
+
+- name: Verify the exact remote SCP and current Executive state
+  hosts: "{{ retry_scp_host }}"
+  gather_facts: false
+  any_errors_fatal: true
+  become: true
+  become_method: runas
+  become_user: SYSTEM
+  tasks:
+    - name: Read remote identity and reject active installation work
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$Computer, [int]$Build)
+          $ErrorActionPreference='Stop'
+          $Ansible.Changed=$false
+          if($env:COMPUTERNAME -ne $Computer){throw 'Wrong remote SCP guest.'}
+          $service=Get-CimInstance Win32_Service -Filter "Name='SMS_EXECUTIVE'"
+          if(-not $service -or $service.StartName -ne 'LocalSystem' -or $service.StartMode -ne 'Auto'){throw 'Unexpected remote Executive configuration.'}
+          $exe=([regex]::Match($service.PathName,'(?i)"?([^"\r\n]+?\.exe)')).Groups[1].Value
+          $version=[version][Diagnostics.FileVersionInfo]::GetVersionInfo($exe).FileVersion
+          if($version.Build -gt $Build){throw 'Remote component is newer than the selected release.'}
+          $ready=$service.State -eq 'Running' -and $version.Build -eq $Build
+          if(-not $ready -and $service.State -ne 'Stopped'){throw 'Remote Executive is not stopped; leave native work undisturbed.'}
+          $bootstrap=@(Get-CimInstance Win32_Service | Where-Object {$_.Name -like 'SMS_SERVER_BOOTSTRAP*' -and $_.State -ne 'Stopped'})
+          if($bootstrap.Count -or @(Get-Process srvboot,setup,setupwpf,msiexec -ErrorAction SilentlyContinue).Count){throw 'Remote installation work is active.'}
+          if(-not (Test-ComputerSecureChannel)){throw 'Remote domain trust is not healthy.'}
+          $Ansible.Result=@{Computer=$env:COMPUTERNAME;Version=$version.ToString();State=$service.State;NeedsRetry=(-not $ready);Identity=$service.StartName}
+        parameters:
+          Computer: "{{ retry_scp_computer }}"
+          Build: "{{ retry_target_build | int }}"
+      register: component_remote_guard
+    - ansible.builtin.debug:
+        msg:
+          Preview: "{{ retry_preview | default(true) | bool }}"
+          Remote: "{{ component_remote_guard.result }}"
+          WouldRestartSiteComponentManager: "{{ component_remote_guard.result.NeedsRetry }}"
+
+- name: Request one normal native component-manager retry
+  hosts: "{{ retry_site_host }}"
+  gather_facts: false
+  any_errors_fatal: true
+  become: true
+  become_method: runas
+  become_user: SYSTEM
+  tasks:
+    - *site_guard
+    - name: Normally restart only the idle component manager once
+      ansible.windows.win_service:
+        name: SMS_SITE_COMPONENT_MANAGER
+        state: restarted
+      when:
+        - not (retry_preview | default(true) | bool)
+        - hostvars[retry_scp_host].component_remote_guard.result.NeedsRetry | bool
+    - ansible.builtin.debug:
+        msg: Preview made no service changes.
+      when: retry_preview | default(true) | bool
+
+- name: Verify that native reinstallation restores the current SCP Executive
+  hosts: "{{ retry_scp_host }}"
+  gather_facts: false
+  any_errors_fatal: true
+  become: true
+  become_method: runas
+  become_user: SYSTEM
+  tasks:
+    - name: Wait for the target build and normal service startup
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$Computer, [int]$Build)
+          $ErrorActionPreference='Stop'
+          $Ansible.Changed=$false
+          if($env:COMPUTERNAME -ne $Computer){throw 'Wrong remote SCP guest.'}
+          $Ansible.Result=@{Computer=$env:COMPUTERNAME;Version=$null;State='PendingNativeInstallation';Ready=$false}
+          $service=Get-CimInstance Win32_Service -Filter "Name='SMS_EXECUTIVE'"
+          if(-not $service){return}
+          $exe=([regex]::Match($service.PathName,'(?i)"?([^"\r\n]+?\.exe)')).Groups[1].Value
+          if(-not [IO.File]::Exists($exe)){return}
+          $fileVersion=[Diagnostics.FileVersionInfo]::GetVersionInfo($exe).FileVersion
+          if(-not $fileVersion){return}
+          $version=[version]$fileVersion
+          $Ansible.Result=@{Computer=$env:COMPUTERNAME;Version=$version.ToString();State=$service.State;Ready=($service.State -eq 'Running' -and $service.StartName -eq 'LocalSystem' -and $version.Build -eq $Build)}
+        parameters:
+          Computer: "{{ retry_scp_computer }}"
+          Build: "{{ retry_target_build | int }}"
+      register: component_repaired
+      until: component_repaired.result.Ready | default(false) | bool
+      retries: 90
+      delay: 10
+      when: not (retry_preview | default(true) | bool)
+    - ansible.builtin.debug:
+        var: component_repaired.result
+      when: not (retry_preview | default(true) | bool)

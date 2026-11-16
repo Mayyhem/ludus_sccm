@@ -1,5 +1,7 @@
 ---
 ludus_install_directory: /opt/ludus
+ludus_sccm_cache_directory: '{{ ludus_install_directory }}/resources/sccm'
+ludus_sccm_download_on_guest: false
 ludus_sccm_target_version: "latest"
 ludus_sccm_install_hotfixes: true
 ludus_sccm_work_directory: 'C:\ludus\sccm'
@@ -11,3 +13,10 @@ ludus_sccm_poll_seconds: 30
 ludus_sccm_update_timeout_minutes: 180
 ludus_sccm_client_timeout_minutes: 90
 ludus_sccm_allow_prerequisite_warnings: false
+
+# Deployment restarts only explicit native checkpoints, one inventory guest at a time.
+ludus_sccm_automatic_reboots: true
+ludus_sccm_max_restart_rounds: 3
+ludus_sccm_restart_timeout_seconds: 900
+# Optional FQDN/short-name -> inventory-host mapping for custom VM naming.
+ludus_sccm_restart_inventory_map: {}

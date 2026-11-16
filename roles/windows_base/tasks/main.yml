@@ -57,3 +57,7 @@
         dest: "C:\\{{ role_name }}_completed.marker"
     
   when: not role_marker.stat.exists
+
+- name: Apply explicitly requested OS security updates even on an existing guest
+  ansible.builtin.include_tasks: updates.yml
+  when: ludus_sccm_windows_update_accept_list | length > 0

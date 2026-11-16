@@ -39,21 +39,45 @@ $servers = Get-ComputersInOU -SearchBase $serversOU
 $workstations = Get-ComputersInOU -SearchBase $workstationsOU
 $domainControllers = Get-ADDomainController -Filter *
 
+function Invoke-ComputerPolicyRefresh {
+    param(
+        [string]$Computer,
+        [scriptblock]$Command = {
+            $output = & "$env:SystemRoot\System32\gpupdate.exe" /target:computer /force /wait:120 2>&1 | Out-String
+            [pscustomobject]@{Computer = $env:COMPUTERNAME; ExitCode = $LASTEXITCODE; Output = $output}
+        }
+    )
+    if (($Computer -split '\.')[0] -ieq $env:COMPUTERNAME) {
+        $result = & $Command
+    } else {
+        $result = Invoke-Command -ComputerName $Computer -ScriptBlock $Command -ErrorAction Stop
+    }
+    if ($result.ExitCode -ne 0) { throw "Computer policy refresh on $Computer failed with exit code $($result.ExitCode): $($result.Output)" }
+    return $result
+}
+
+$targets = @()
 if ($module.Params.workstations) {
-    foreach ($workstation in $workstations) {
-        Invoke-GPUpdate -Computer $workstation.Name -Force -RandomDelayInMinutes 0
-    }
+    $targets += @($workstations | ForEach-Object { if ($_.DNSHostName) { $_.DNSHostName } else { $_.Name } })
 }
-
 if ($module.Params.servers) {
-    foreach ($server in $servers) {
-        Invoke-GPUpdate -Computer $server.Name -Force -RandomDelayInMinutes 0
-    }
+    $targets += @($servers | ForEach-Object { if ($_.DNSHostName) { $_.DNSHostName } else { $_.Name } })
 }
-
 if ($module.Params.domain_controllers) {
-    foreach ($domainController in $domainControllers) {
-        Invoke-GPUpdate -Computer $domainController.Name -Force -RandomDelayInMinutes 0
+    $targets += @($domainControllers | ForEach-Object { if ($_.HostName) { $_.HostName } else { $_.Name } })
+}
+$targets = @($targets | Sort-Object -Unique)
+$module.Result.targets = $targets
+$module.Result.results = @()
+$module.Result.changed = $false
+if ($module.CheckMode) { $module.ExitJson(); return }
+
+foreach ($computer in $targets) {
+    try {
+        $module.Result.results += Invoke-ComputerPolicyRefresh $computer
+        $module.Result.changed = $true
+    } catch {
+        $module.FailJson("Cannot refresh computer policy on ${computer}: $($_.Exception.Message)", $_)
     }
 }
 

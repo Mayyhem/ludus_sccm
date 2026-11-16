@@ -4,7 +4,8 @@ Set-StrictMode -Version Latest
 $script:SccmLogPath = $null
 
 function Set-SccmLog {
-    param([Parameter(Mandatory)][string]$Path)
+    param([Parameter(Mandatory)][string]$Path, [switch]$OnlyIfUnset)
+    if ($OnlyIfUnset -and $script:SccmLogPath) { return }
     $script:SccmLogPath = $Path
     $directory = Split-Path -Parent $Path
     [void][System.IO.Directory]::CreateDirectory($directory)
@@ -91,6 +92,170 @@ function Connect-SccmSite {
     Set-Location "${SiteCode}:\"
 }
 
+function Request-SccmCatalogCheck {
+    try {
+        Invoke-CMSiteUpdateCheck -ErrorAction Stop | Out-Null
+        Write-SccmLog 'Requested normal update catalog synchronization.'
+        return $true
+    } catch {
+        if ($_.Exception.Message -match '\bStill checking for updates\b') {
+            Write-SccmLog 'Normal update catalog synchronization is already running; waiting for its results.'
+            return $false
+        }
+        throw
+    }
+}
+
+function Get-SccmBootTimeUtc {
+    return (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime.ToUniversalTime().ToString('o')
+}
+
+function Get-SccmPendingRestartRequests {
+    $path = Join-Path $PSScriptRoot 'pending-deployment-restarts.json'
+    if (-not (Test-Path -LiteralPath $path)) { return @() }
+    $boot = Get-SccmBootTimeUtc
+    $records = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    foreach ($record in @($records)) {
+        if ($null -ne $record -and $record.BootTimeUtc -eq $boot) { $record }
+    }
+}
+
+function New-SccmRestartRequest {
+    param([string]$Computer, [string]$Kind, [string]$Version = '', [string]$SiteCode = '', [string]$PackageGuid = '', [switch]$Persist)
+    $request = @{Computer = $Computer; Kind = $Kind; Version = $Version; SiteCode = $SiteCode; PackageGuid = $PackageGuid; BootTimeUtc = (Get-SccmBootTimeUtc)}
+    if ($Persist) {
+        # This is the automation's own journal, never a vendor queue or status.
+        $previous = @(Get-SccmPendingRestartRequests | Where-Object Kind -ne $Kind)
+        ConvertTo-Json -InputObject @($previous + @($request)) -Depth 5 | Set-Content -LiteralPath (Join-Path $PSScriptRoot 'pending-deployment-restarts.json') -Encoding UTF8
+    }
+    return $request
+}
+
+function Stop-SccmForRestart {
+    param([object[]]$Requests, [string]$Message)
+    if (-not $Requests.Count) { Stop-SccmWork 'A restart was requested without an identified target.' }
+    Write-SccmLog $Message
+    $failure = New-Object System.InvalidOperationException($Message)
+    $failure.Data['SccmFatal'] = $true
+    $failure.Data['SccmRestartRequestsJson'] = ConvertTo-Json -InputObject @($Requests) -Depth 6 -Compress
+    throw $failure
+}
+
+function Get-SccmSiteRestartRequests {
+    param([object[]]$Sites, [object[]]$States, [string]$PackageGuid)
+    foreach ($state in @($States | Where-Object State -eq 196613)) {
+        $site = @($Sites | Where-Object SiteCode -eq $state.SiteCode)
+        if ($site.Count -ne 1) { Stop-SccmWork 'Cannot identify the site that requested a restart.' }
+        $boot = Invoke-SccmRemote $site[0].ServerName { (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime.ToUniversalTime().ToString('o') }
+        @{Computer = [string]$site[0].ServerName; Kind = 'SiteUpdate'; Version = [string]$site[0].Version; SiteCode = [string]$site[0].SiteCode; PackageGuid = $(if($PackageGuid){$PackageGuid}else{[string]$state.PackageGuid}); BootTimeUtc = [string]$boot}
+    }
+}
+
+function Test-SccmGuestRestart {
+    param([hashtable]$Request)
+    if (([string]$Request.Computer -split '\.')[0] -ine $env:COMPUTERNAME) { Stop-SccmWork 'Restart target does not match this guest.' }
+    if ($Request.Kind -notin @('Client','Console','SiteUpdate','WindowsPrerequisite')) { Stop-SccmWork 'Unknown restart checkpoint kind.' }
+    if ([string]$Request.Computer -like '*.*') {
+        $domain = (Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).Domain
+        if (([string]$Request.Computer -split '\.',2)[1] -ine $domain) { Stop-SccmWork 'Restart target domain does not match this guest.' }
+    }
+    if (@(Get-Process ccmsetup,srvboot,setup,setupwpf -ErrorAction SilentlyContinue).Count -or
+        (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\InProgress')) {
+        Stop-SccmWork 'Native installation work is active; refusing a guest restart.'
+    }
+    $boot = Get-SccmBootTimeUtc
+    if (-not $Request.BootTimeUtc) { Stop-SccmWork 'A restart request has no boot identity.' }
+    if ($boot -ne $Request.BootTimeUtc) { return @{Computer=$env:COMPUTERNAME;NeedsRestart=$false;AlreadyRebooted=$true} }
+    $needed = $false
+    switch ($Request.Kind) {
+        Client {
+            $state = Get-SccmClientState
+            if ($state.Version -ne $Request.Version -or ($state.AssignedSite -and $state.AssignedSite -ne $Request.SiteCode)) { Stop-SccmWork 'Client identity/version changed after its restart checkpoint.' }
+            $needed = $state.RebootRequired -and -not $state.SetupRunning
+        }
+        Console {
+            $pending = @(Get-SccmPendingRestartRequests | Where-Object { $_.Kind -eq 'Console' -and $_.Version -eq $Request.Version })
+            if ([version](Get-SccmConsoleVersion) -ne [version]$Request.Version) { Stop-SccmWork 'The installed console does not match its restart checkpoint.' }
+            $needed = $pending.Count -eq 1
+        }
+        SiteUpdate {
+            if ($Request.SiteCode -notmatch '^[A-Z0-9]{3}$') { Stop-SccmWork 'Invalid restart site code.' }
+            $guid = ([guid]$Request.PackageGuid).ToString()
+            $states = @(Get-CimInstance -Namespace "root\SMS\site_$($Request.SiteCode)" -ClassName SMS_CM_UpdatePackageSiteStatus -Filter "PackageGuid='$guid'" -ErrorAction Stop | Where-Object SiteCode -eq $Request.SiteCode)
+            $needed = $states.Count -eq 1 -and $states[0].State -eq 196613
+        }
+        WindowsPrerequisite {
+            $needed = (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') -or
+                (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired')
+        }
+    }
+    if (-not $needed) { Stop-SccmWork 'The recorded native restart checkpoint is no longer present; refusing an unproven restart.' }
+    return @{Computer=$env:COMPUTERNAME;Kind=$Request.Kind;NeedsRestart=$true;AlreadyRebooted=$false}
+}
+
+function Test-SccmGuestAfterRestart {
+    param([hashtable]$Request)
+    if (([string]$Request.Computer -split '\.')[0] -ine $env:COMPUTERNAME) { Stop-SccmWork 'Wrong guest after restart.' }
+    if ((Get-SccmBootTimeUtc) -eq $Request.BootTimeUtc) { return $false }
+    switch ($Request.Kind) {
+        Client {
+            $state = Get-SccmClientState
+            return $state.Service -eq 'Running' -and $state.AssignedSite -eq $Request.SiteCode -and -not $state.SetupRunning -and -not $state.RebootRequired
+        }
+        Console { return [version](Get-SccmConsoleVersion) -eq [version]$Request.Version }
+        SiteUpdate {
+            $guid = ([guid]$Request.PackageGuid).ToString()
+            $states = @(Get-CimInstance -Namespace "root\SMS\site_$($Request.SiteCode)" -ClassName SMS_CM_UpdatePackageSiteStatus -Filter "PackageGuid='$guid'" -ErrorAction Stop | Where-Object SiteCode -eq $Request.SiteCode)
+            return (Get-Service SMS_EXECUTIVE -ErrorAction Stop).Status -eq 'Running' -and $states.Count -eq 1 -and $states[0].State -ne 196613
+        }
+        WindowsPrerequisite {
+            return -not (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') -and
+                -not (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired')
+        }
+        default { Stop-SccmWork 'Unknown post-restart checkpoint kind.' }
+    }
+}
+
+function Update-SccmServicingConsole {
+    param([string]$Provider, [string]$SiteCode, [int]$TimeoutMinutes = 180)
+    # Read the expected version with CIM before importing console assemblies.
+    # Console upgrades run in a separate Ansible PowerShell process from cmdlets.
+    $identification = @(Get-SccmProviderData $Provider $SiteCode 'SMS_Identification')
+    $sites = @(Get-SccmProviderData $Provider $SiteCode 'SMS_Site' "SiteCode='$SiteCode'")
+    if ($identification.Count -ne 1 -or -not $identification[0].SMSAvailableConsoleVersion -or $sites.Count -ne 1) {
+        Stop-SccmWork 'Cannot establish the servicing console version and owning site.'
+    }
+    $site = $sites[0]
+    if (($site.ServerName -split '\.')[0] -ine $env:COMPUTERNAME) { Stop-SccmWork 'Update the servicing console only on its owning site server.' }
+    $expected = [version]$identification[0].SMSAvailableConsoleVersion
+    $installed = Get-SccmConsoleVersion
+    if (-not $installed) { Stop-SccmWork 'The site server has no installed servicing console. Install its baseline console first.' }
+    if ([version]$installed -gt $expected) { Stop-SccmWork 'The servicing console is newer than this site; automatic console downgrade is not supported.' }
+    if ([version]$installed -eq $expected) {
+        $pending = @(Get-SccmPendingRestartRequests | Where-Object Kind -eq 'Console')
+        return @{Changed = $false; Version = [string]$expected; RebootRequired = ($pending.Count -gt 0); RebootRequests = $pending}
+    }
+    Wait-SccmCondition -Description 'the local site finishes servicing before its console is updated' -TimeoutMinutes $TimeoutMinutes -RetryReadErrors -Test {
+        $states = @(Get-SccmProviderData $Provider $SiteCode 'SMS_CM_UpdatePackageSiteStatus' | Where-Object SiteCode -eq $SiteCode)
+        $requests = @(Get-SccmSiteRestartRequests @($site) $states '')
+        if ($requests.Count) { Stop-SccmForRestart $requests 'The site needs a restart before updating its console.' }
+        if (@($states | Where-Object { Test-SccmUpdateInstalling $_.State }).Count) { return $false }
+        $actual = Get-SccmHostSiteState $env:COMPUTERNAME
+        return $actual.ServiceStatus -eq 'Running' -and [version]$actual.Version -ge [version]$site.Version
+    }
+    $source = Join-Path $site.InstallDir 'tools\ConsoleSetup\ConsoleSetup.exe'
+    $targetDirectory = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Configuration Manager\AdminConsole'
+    $reboot = Invoke-SccmInstaller -Path $source -Arguments "/q `"TargetDir=$targetDirectory`" DefaultSiteServerName=$($site.ServerName)" -TimeoutMinutes 30
+    if ($reboot) {
+        $request = New-SccmRestartRequest $site.ServerName Console ([string]$expected) $SiteCode -Persist
+        return @{Changed = $true; Version = [string]$expected; RebootRequired = $true; RebootRequests = @($request)}
+    }
+    $actualConsole = Get-SccmConsoleVersion
+    if ([version]$actualConsole -ne $expected) { Stop-SccmWork "The servicing console did not reach $expected. Review ConfigMgrAdminUISetup.log." }
+    Write-SccmLog "Servicing console updated to $expected."
+    return @{Changed = $true; Version = [string]$expected; RebootRequired = $false}
+}
+
 function Get-SccmInstalledApplications {
     # Registry inventory avoids Win32_Product, whose query can repair MSI
     # installations and therefore is not a read-only version check.
@@ -108,14 +273,34 @@ function Assert-SccmMicrosoftSignature {
     Write-SccmLog "Verified Microsoft signature: $Path"
 }
 
+function Get-SccmMediaExtractionArguments {
+    param([psobject]$VersionInfo, [string]$Directory)
+    # Current baseline downloads use the vendor's embedded 7-Zip extractor.
+    # Its switches differ from the older Microsoft self-extracting media.
+    if ($VersionInfo.ProductName -eq '7-Zip' -and $VersionInfo.FileDescription -eq '7z SFX') {
+        # These archives contain SMSSETUP at their root. Older media creates
+        # cd.retail.LN itself; keep the same media path for both formats.
+        return "-y -o`"$(Join-Path $Directory 'cd.retail.LN')`""
+    }
+    return "/s -d`"$Directory`""
+}
+
 function Invoke-SccmInstaller {
-    param([string]$Path, [string]$Arguments, [int[]]$AcceptedExitCodes = @(0, 3010))
+    param([string]$Path, [string]$Arguments, [int[]]$AcceptedExitCodes = @(0, 3010), [ValidateRange(0, 1440)][int]$TimeoutMinutes = 0)
     Assert-SccmMicrosoftSignature $Path
     Write-SccmLog "Starting installer $Path"
+    $start = @{FilePath = $Path; ArgumentList = $Arguments; WindowStyle = 'Hidden'; PassThru = $true; Wait = ($TimeoutMinutes -eq 0)}
     if ([IO.Path]::GetExtension($Path) -ieq '.msi') {
-        $process = Start-Process -FilePath "$env:SystemRoot\System32\msiexec.exe" -ArgumentList "/i `"$Path`" $Arguments" -WindowStyle Hidden -PassThru -Wait
-    } else {
-        $process = Start-Process -FilePath $Path -ArgumentList $Arguments -WindowStyle Hidden -PassThru -Wait
+        $start.FilePath = "$env:SystemRoot\System32\msiexec.exe"
+        $start.ArgumentList = "/i `"$Path`" $Arguments"
+    }
+    $process = Start-Process @start
+    if ($TimeoutMinutes -gt 0) {
+        if (-not $process.WaitForExit($TimeoutMinutes * 60000)) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            Stop-SccmWork "Installer $Path timed out after $TimeoutMinutes minutes. Check its log and command-line switches before rerunning."
+        }
+        $process.Refresh()
     }
     if ($process.ExitCode -notin $AcceptedExitCodes) { Stop-SccmWork "Installer $Path failed with exit code $($process.ExitCode)." }
     Write-SccmLog "Installer finished with exit code $($process.ExitCode): $Path"
@@ -136,16 +321,41 @@ function Remove-SccmPrerequisitePackage {
     return Invoke-SccmInstaller -Path $match.Groups['path'].Value -Arguments '/uninstall /quiet /norestart'
 }
 
+function Get-SccmVisualCppRuntimeVersion {
+    param([ValidateSet('x86', 'x64')][string]$Architecture)
+    $versions = @(
+        foreach ($root in @('HKLM:\SOFTWARE', 'HKLM:\SOFTWARE\WOW6432Node')) {
+            $runtime = Get-ItemProperty -LiteralPath "$root\Microsoft\VisualStudio\14.0\VC\Runtimes\$Architecture" -ErrorAction SilentlyContinue
+            if ($runtime -and $runtime.Installed -eq 1) { [version]([string]$runtime.Version).TrimStart('v') }
+        }
+    )
+    if ($versions.Count) { return ($versions | Sort-Object -Descending | Select-Object -First 1) }
+    return $null
+}
+
 function Install-SccmPrerequisites {
     param([string]$WorkDirectory, [bool]$PrepareAdk = $false)
     $hasChanged = $false
     $needsRestart = $false
     $dotnet = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full' -ErrorAction Stop
     if ($dotnet.Release -lt 528040) { Stop-SccmWork '.NET Framework 4.8 is required. Install it and restart this server before rerunning.' }
+    # OLE DB 19's x64 package also installs x86 binaries. Check both runtimes
+    # independently of ODBC, including when the ODBC driver is already current.
+    foreach ($architecture in @('x64', 'x86')) {
+        $package = "$WorkDirectory\vc-2022-$architecture.exe"
+        $expected = [version](Get-Item -LiteralPath $package).VersionInfo.FileVersion
+        $installed = Get-SccmVisualCppRuntimeVersion $architecture
+        if ($null -eq $installed -or $installed -lt $expected) {
+            $needsRestart = (Invoke-SccmInstaller $package '/install /quiet /norestart' @(0, 1638, 3010)) -or $needsRestart
+            $hasChanged = $true
+        }
+        $verified = Get-SccmVisualCppRuntimeVersion $architecture
+        if ($null -eq $verified -or $verified -lt $expected) { Stop-SccmWork "Visual C++ $architecture installation did not register the required runtime version $expected." }
+        Write-SccmLog "Verified Visual C++ $architecture runtime $verified."
+    }
     $applications = Get-SccmInstalledApplications
     $driver = @($applications | Where-Object DisplayName -eq 'Microsoft ODBC Driver 18 for SQL Server')
     if ($driver.Count -ne 1 -or $driver[0].DisplayVersion -ne '18.6.2.1') {
-        $needsRestart = (Invoke-SccmInstaller "$WorkDirectory\vc-2022-x64.exe" '/install /quiet /norestart' @(0, 1638, 3010)) -or $needsRestart
         foreach ($application in $driver) { $needsRestart = (Remove-SccmPrerequisitePackage $application) -or $needsRestart }
         $needsRestart = (Invoke-SccmInstaller "$WorkDirectory\odbc-18.6.2.1.msi" 'IACCEPTMSODBCSQLLICENSETERMS=YES /qn /norestart') -or $needsRestart
         $hasChanged = $true
@@ -189,6 +399,26 @@ function ConvertTo-SccmAdminShare {
     return '\\{0}\{1}$\{2}' -f $ComputerName, $match.Groups['drive'].Value, $match.Groups['tail'].Value
 }
 
+function Copy-SccmFile {
+    [CmdletBinding(DefaultParameterSetName = 'Path')]
+    param(
+        [Parameter(Mandatory, ParameterSetName = 'Path')][string]$Path,
+        [Parameter(Mandatory, ParameterSetName = 'LiteralPath')][string]$LiteralPath,
+        [Parameter(Mandatory)][string]$Destination,
+        [switch]$Recurse
+    )
+    # UNC paths inherit the current provider unless explicitly qualified.
+    # Servicing keeps a CMSite drive current for Configuration Manager cmdlets.
+    $copy = @{Destination = "Microsoft.PowerShell.Core\FileSystem::$Destination"; Force = $true; ErrorAction = 'Stop'}
+    if ($PSCmdlet.ParameterSetName -eq 'LiteralPath') {
+        $copy.LiteralPath = "Microsoft.PowerShell.Core\FileSystem::$LiteralPath"
+    } else {
+        $copy.Path = "Microsoft.PowerShell.Core\FileSystem::$Path"
+    }
+    if ($Recurse) { $copy.Recurse = $true }
+    Microsoft.PowerShell.Management\Copy-Item @copy
+}
+
 function Get-SccmHostSiteState {
     param([string]$ComputerName)
     Invoke-SccmRemote $ComputerName {
@@ -218,9 +448,37 @@ function Wait-SccmSiteReady {
 }
 
 function Wait-SccmPassiveReady {
-    param([string]$Provider, [string]$SiteCode, [string]$Server, [int]$TimeoutMinutes = 180)
+    param(
+        [string]$Provider, [string]$SiteCode, [string]$Server,
+        [int]$TimeoutMinutes = 180,
+        [ValidateRange(0, 3600)][int]$ValidationGraceSeconds = 300
+    )
+    $validation = @{FirstFailureSeconds = $null}
+    $elapsed = [System.Diagnostics.Stopwatch]::StartNew()
     Wait-SccmCondition -Description "passive server $Server is installed and ready" -TimeoutMinutes $TimeoutMinutes -RetryReadErrors -Test {
         $stages = @(Get-SccmProviderData $Provider $SiteCode 'SMS_HA_SiteServerTopLevelMonitoring' "SiteServerName='$Server'")
+        $failed = @($stages | Where-Object { $_.StageId -in @(11, 12, 13, 14) -and $_.StageCompleted -eq 3 })
+        if ($failed.Count) {
+            $details = @(Get-SccmProviderData $Provider $SiteCode 'SMS_HA_SiteServerDetailedMonitoring' "SiteServerName='$Server'" | Where-Object { $_.StageId -in @(11, 12, 13, 14) -and $_.Applicable -eq 1 -and $_.IsComplete -eq 3 })
+            $names = @($details | ForEach-Object SubStageName) -join ', '
+            $installed = @($stages | Where-Object { $_.StageId -in @(11, 12, 13) -and $_.StageCompleted -eq 2 })
+            # Native site validation (0xe000c) retries every minute. Initial
+            # site-key distribution can briefly fail after installation finishes.
+            # Wait for the vendor's result; never change its key or HA status.
+            $siteValidation = @($details | Where-Object {
+                $_.PSObject.Properties.Name -contains 'SubStageid' -and [int]$_.SubStageid -eq 0xe000c -and $_.StageId -eq 14
+            })
+            if ($failed.Count -eq 1 -and $failed[0].StageId -eq 14 -and
+                $installed.Count -eq 3 -and $details.Count -eq 1 -and $siteValidation.Count -eq 1) {
+                if ($null -eq $validation.FirstFailureSeconds) { $validation.FirstFailureSeconds = $elapsed.Elapsed.TotalSeconds }
+                if (($elapsed.Elapsed.TotalSeconds - $validation.FirstFailureSeconds) -ge $ValidationGraceSeconds) {
+                    Stop-SccmWork "Passive server $Server native site validation remained failed for $ValidationGraceSeconds seconds: $names. Review failovermgr.log; no recovery or status changes were submitted."
+                }
+                Write-SccmLog "Passive server $Server native site validation is not ready: $names. Waiting up to $ValidationGraceSeconds seconds for its native recheck." 'WARNING'
+                return $false
+            }
+            Stop-SccmWork "Passive server $Server reports a failed installation stage: $names. Review failovermgr.log on the active and passive servers before retrying."
+        }
         $site = @(Get-SccmProviderData $Provider $SiteCode 'SMS_Site' "SiteCode='$SiteCode'")[0]
         $actual = Get-SccmHostSiteState $Server
         return Test-SccmPassiveReady $stages $actual.Version $site.Version
@@ -232,8 +490,108 @@ function Get-SccmSiteProvider {
     if ($RootSiteCode -eq $TargetSiteCode) { return $Provider }
     $matches = @(Get-SccmProviderData $Provider $RootSiteCode 'SMS_SCI_SysResUse' | Where-Object { $_.SiteCode -eq $TargetSiteCode -and $_.RoleName -eq 'SMS Provider' })
     if (-not $matches.Count) { Stop-SccmWork "No SMS Provider was found for site $TargetSiteCode." }
+    $site = @(Get-SccmProviderData $Provider $RootSiteCode 'SMS_Site' "SiteCode='$TargetSiteCode'")[0]
     Write-SccmLog "Using the provider registered for site $TargetSiteCode."
-    return ([string]$matches[0].NetworkOSPath).Trim('\')
+    return Select-SccmSiteProvider $matches $site.ServerName
+}
+
+function Select-SccmSiteProvider {
+    param([object[]]$ProviderRoles, [string]$SiteServer)
+    # A site can register providers on its passive and remote provider servers
+    # too, in no meaningful order. Those hosts need not accept remote WMI from
+    # other sites, so use the provider on the active site server when it has one.
+    $servers = @($ProviderRoles | ForEach-Object { ([string]$_.NetworkOSPath).Trim('\') })
+    $active = @($servers | Where-Object { $SiteServer -and ($_ -split '\.')[0] -ieq ($SiteServer -split '\.')[0] })
+    if ($active.Count) { return $active[0] }
+    return $servers[0]
+}
+
+function Get-SccmSiteCommunicationState {
+    param([string]$Provider, [string]$SiteCode)
+    $components = @(Get-SccmProviderData $Provider $SiteCode 'SMS_SCI_Component' "SiteCode='$SiteCode'" |
+        Where-Object ComponentName -eq 'SMS_SITE_COMPONENT_MANAGER')
+    if ($components.Count -ne 1) { Stop-SccmWork "Cannot uniquely read communication settings for site $SiteCode." }
+    $state = @($components[0].Props | Where-Object PropertyName -eq 'IISSSLState')
+    if ($state.Count -ne 1) { Stop-SccmWork "Site $SiteCode does not expose its communication flags." }
+    return [uint32]$state[0].Value
+}
+
+function Set-SccmCasGeneratedCertificates {
+    param([string]$SiteCode, [uint32]$ExpectedState, [bool]$Preview = $true)
+    # Set-CMSite in the 2509 module skips SetClientCommunicationProperties for
+    # Type 4. Use the documented site-control SDK for the CAS configuration.
+    $components = @(Get-CMSiteComponent -SiteCode $SiteCode -ComponentName 'SMS_SITE_COMPONENT_MANAGER' -ErrorAction Stop)
+    if ($components.Count -ne 1) { Stop-SccmWork "Cannot uniquely select the CAS site-control component for $SiteCode." }
+    $component = $components[0]
+    $component.Get()
+    if ($component.SiteCode -ne $SiteCode -or $component.ComponentName -ne 'SMS_SITE_COMPONENT_MANAGER' -or $component.FileType -ne 2) {
+        Stop-SccmWork 'Unexpected CAS site-control component identity.'
+    }
+    $properties = $component.EmbeddedProperties
+    if (-not $properties.ContainsKey('IISSSLState')) { Stop-SccmWork 'CAS communication flags are missing from the SDK object.' }
+    $before = [uint32]$properties['IISSSLState']['Value'].IntegerValue
+    if ($before -ne $ExpectedState) { Stop-SccmWork 'CAS communication flags changed since the configuration preview.' }
+    if ($Preview -or ($before -band 1024) -ne 0) { return $false }
+    $properties['IISSSLState']['Value'].IntegerValue = $before -bor 1024
+    $component.EmbeddedProperties = $properties
+    $component.Put()
+    return $true
+}
+
+function Enable-SccmEnhancedHttp {
+    param([string]$Provider, [string]$SiteCode, [bool]$Preview = $false)
+    $sites = @(Get-SccmProviderData $Provider $SiteCode 'SMS_Site' | Where-Object Type -in @(2, 4))
+    if (-not $sites.Count -or @($sites | Where-Object Status -ne 1).Count) {
+        Stop-SccmWork 'Enhanced HTTP configuration requires active CAS/primary sites.'
+    }
+    $distributionPoints = @(Get-SccmProviderData $Provider $SiteCode 'SMS_SCI_SysResUse' |
+        Where-Object RoleName -eq 'SMS Distribution Point')
+    foreach ($dp in $distributionPoints) {
+        if (@($dp.Props | Where-Object { $_.PropertyName -eq 'IsAnonymousEnabled' -and $_.Value -ne 0 }).Count) {
+            Stop-SccmWork 'Enhanced HTTP requires anonymous distribution-point access to be disabled. Review that setting explicitly.'
+        }
+    }
+    $changed = $false
+    $results = @()
+    try {
+        foreach ($site in $sites) {
+            $code = [string]$site.SiteCode
+            $siteProvider = Get-SccmSiteProvider $Provider $SiteCode $code
+            $before = Get-SccmSiteCommunicationState $siteProvider $code
+            # Read the native bit for idempotence; save through native configuration APIs.
+            $enabled = ($before -band 1024) -ne 0
+            $httpsOnly = ($before -band 1) -ne 0
+            $needsChange = -not ($enabled -or $httpsOnly)
+            if ($needsChange -and $Preview -and $site.Type -eq 4) {
+                Connect-SccmSite $code $siteProvider
+                [void](Set-SccmCasGeneratedCertificates $code $before $true)
+            }
+            if ($needsChange -and -not $Preview) {
+                $active = @(Get-SccmProviderData $Provider $SiteCode 'SMS_CM_UpdatePackages' |
+                    Where-Object { Test-SccmUpdateInstalling $_.State })
+                if ($active.Count) { Stop-SccmWork 'Finish the running update before changing site communication settings.' }
+                Connect-SccmSite $code $siteProvider
+                if ($site.Type -eq 4) {
+                    [void](Set-SccmCasGeneratedCertificates $code $before $false)
+                } else {
+                    Set-CMSite -SiteCode $code -UseSmsGeneratedCert $true -ErrorAction Stop
+                }
+                Wait-SccmCondition -Description "Enhanced HTTP enabled at $code" -TimeoutMinutes 5 -Test {
+                    return ((Get-SccmSiteCommunicationState $siteProvider $code) -band 1024) -ne 0
+                }
+                $after = Get-SccmSiteCommunicationState $siteProvider $code
+                # The native cmdlet also normalizes HTTP mode bits 64/128.
+                # Preserve PKI, revocation and all flags outside that native mask.
+                if (($after -band (-bnot 1216)) -ne ($before -band (-bnot 1216))) {
+                    Stop-SccmWork "Unexpected communication flag changes at $code. Review the native site settings."
+                }
+                $changed = $true
+                Write-SccmLog "Enabled Configuration Manager generated HTTP certificates at site $code."
+            }
+            $results += @{SiteCode = $code; PreviouslyEnabled = $enabled; HttpsOnly = $httpsOnly; WouldEnable = $needsChange; Preview = $Preview}
+        }
+        return @{Changed = $changed; Sites = $results}
+    } finally { Connect-SccmSite $SiteCode $Provider }
 }
 
 function Assert-SccmUpdateReadiness {
@@ -246,7 +604,13 @@ function Assert-SccmUpdateReadiness {
                 (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired')
             return @{FreeBytes = $disk.FreeSpace; PendingRestart = $pending}
         }
-        if ($state.PendingRestart) { Stop-SccmWork "Site server $($site.ServerName) needs a Windows restart before servicing." }
+        if ($state.PendingRestart) {
+            $request = Invoke-SccmRemote $site.ServerName {
+                param($computer, $code, $version)
+                @{Computer = $computer; Kind = 'WindowsPrerequisite'; SiteCode = $code; Version = $version; PackageGuid = ''; BootTimeUtc = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime.ToUniversalTime().ToString('o')}
+            } @($site.ServerName, $site.SiteCode, $site.Version)
+            Stop-SccmForRestart @($request) "Site server $($site.ServerName) needs a Windows restart before servicing."
+        }
         if ($state.FreeBytes -lt 50GB) { Stop-SccmWork "Site server $($site.ServerName) needs at least 50 GB free on its system disk for this lab's update and recovery media." }
         Write-SccmLog "Site $($site.SiteCode) passes active-state, free-space and pending-restart checks."
     }
@@ -260,6 +624,13 @@ function Test-SccmUpdateFailure {
 function Test-SccmUpdateInstalling {
     param([int]$State)
     return $State -ge 196609 -and $State -le 196629 -and $State -ne 196612
+}
+
+function Test-SccmUpdatePreparationStarted {
+    param([int]$State)
+    # Content replication belongs to an existing prerequisite request. A
+    # completed check can also have refreshed maintenance source files.
+    return $State -in @(65537, 65538, 131073, 131074, 131075)
 }
 
 function Select-SccmHotfix {
@@ -280,11 +651,27 @@ function Select-SccmHotfix {
 }
 
 function Assert-SccmReplication {
-    param([string]$Provider, [string]$SiteCode)
-    $links = @(Get-SccmProviderData $Provider $SiteCode 'SMS_ReplicationLinkStatus')
-    $unhealthy = @($links | Where-Object { $_.InitializationStatus -ne 6 -or $_.FailedSyncs -gt 0 -or $_.DegradedSyncs -gt 0 })
-    if ($unhealthy.Count) { Stop-SccmWork "Database replication has $($unhealthy.Count) unready groups. Review Replication Link Analyzer before another update." }
-    Write-SccmLog "Database replication is ready ($($links.Count) groups)."
+    param([string]$Provider, [string]$SiteCode, [int]$TimeoutMinutes = 60, [int]$PollSeconds = 60)
+    # Shortly after site installation or a site property change, a few groups
+    # can briefly report failed or degraded syncs and then settle without any
+    # repair. Wait for native replication to settle; persistent problems fail.
+    $deadline = [DateTime]::UtcNow.AddMinutes($TimeoutMinutes)
+    do {
+        $links = @(Get-SccmProviderData $Provider $SiteCode 'SMS_ReplicationLinkStatus')
+        $unhealthy = @($links | Where-Object { $_.InitializationStatus -ne 6 -or $_.FailedSyncs -gt 0 -or $_.DegradedSyncs -gt 0 })
+        if (-not $unhealthy.Count) {
+            Write-SccmLog "Database replication is ready ($($links.Count) groups)."
+            return
+        }
+        $names = ($unhealthy | ForEach-Object {
+            '{0}->{1} {2} (initialization {3}, failed {4}, degraded {5})' -f $_.ParentSite, $_.ChildSite, $_.ReplicationGroup, $_.InitializationStatus, $_.FailedSyncs, $_.DegradedSyncs
+        }) -join '; '
+        if ([DateTime]::UtcNow -ge $deadline) {
+            Stop-SccmWork "Database replication has $($unhealthy.Count) unready groups after $TimeoutMinutes minutes: $names. Review Replication Link Analyzer before another update."
+        }
+        Write-SccmLog "Waiting for $($unhealthy.Count) unready replication groups: $names" 'WARNING'
+        Start-Sleep -Seconds $PollSeconds
+    } while ($true)
 }
 
 function Invoke-SccmSqlQuery {
@@ -341,18 +728,13 @@ function Get-SccmUpdateByGuid {
     return $packages[0]
 }
 
-function Set-SccmWarningPolicy {
-    param([string]$Provider, [string]$SiteCode, [string]$PackageGuid, [bool]$AllowWarnings)
-    $session = New-CimSession -ComputerName $Provider -SessionOption (New-CimSessionOption -Protocol Dcom) -ErrorAction Stop
-    try {
-        $package = Get-CimInstance -CimSession $session -Namespace "root\SMS\site_$SiteCode" -ClassName SMS_CM_UpdatePackages -Filter "PackageGuid='$PackageGuid'" -ErrorAction Stop
-        $flag = 0
-        if ($AllowWarnings) { $flag = 2 }
-        # Flag 2 only permits warnings. Prerequisite errors still stop setup.
-        $result = Invoke-CimMethod -CimSession $session -InputObject $package -MethodName SetIgnorePrereqWarning -Arguments @{flag = [uint32]$flag} -ErrorAction Stop
-        if ($result.ReturnValue -ne 0) { Stop-SccmWork "Cannot set the prerequisite warning policy for $PackageGuid." }
-        Write-SccmLog "Prerequisite warning policy for ${PackageGuid}: allow=$AllowWarnings"
-    } finally { Remove-CimSession $session }
+function Get-SccmUpdateCommandObject {
+    param([string]$PackageGuid)
+    # Early and broad releases can share a display name. Bind native actions to
+    # the already selected GUID rather than submitting a name-based request.
+    $matches = @(Get-CMSiteUpdate -Fast -ErrorAction Stop | Where-Object PackageGuid -eq $PackageGuid)
+    if ($matches.Count -ne 1) { Stop-SccmWork "Cannot uniquely select update $PackageGuid for its native action." }
+    return $matches[0]
 }
 
 function Install-SccmUpdatePackage {
@@ -369,23 +751,23 @@ function Install-SccmUpdatePackage {
         Wait-SccmCondition -Description "$packageName applicability is ready" -TimeoutMinutes $TimeoutMinutes -Test {
             $state = (Get-SccmUpdateByGuid $Provider $SiteCode $guid).State
             if (Test-SccmUpdateFailure $state) { Stop-SccmWork "$packageName failed while checking applicability: state $state" }
-            return $state -in @(327682, 262145, 262146, 131073, 131074, 131075)
+            return $state -in @(327682, 262145, 262146) -or (Test-SccmUpdatePreparationStarted $state)
         }
         $current = Get-SccmUpdateByGuid $Provider $SiteCode $guid
         if ($current.State -eq 327682) {
             Write-SccmLog "Requesting download of $packageName."
-            Invoke-CMSiteUpdateDownload -Name $packageName -Force -ErrorAction Stop | Out-Null
+            Invoke-CMSiteUpdateDownload -InputObject (Get-SccmUpdateCommandObject $guid) -Force -ErrorAction Stop | Out-Null
         }
         # Already downloading/downloaded packages are resumed rather than reset.
         Wait-SccmCondition -Description "$packageName download finishes" -TimeoutMinutes $TimeoutMinutes -Test {
             $state = (Get-SccmUpdateByGuid $Provider $SiteCode $guid).State
             if (Test-SccmUpdateFailure $state) { Stop-SccmWork "$packageName download failed: state $state" }
-            return $state -in @(262146, 131073, 131074, 131075)
+            return $state -eq 262146 -or (Test-SccmUpdatePreparationStarted $state)
         }
         $current = Get-SccmUpdateByGuid $Provider $SiteCode $guid
-        if ($current.State -ne 131073) {
+        if (-not (Test-SccmUpdatePreparationStarted $current.State)) {
             Write-SccmLog "Running prerequisites for $packageName."
-            Invoke-CMSiteUpdatePrerequisiteCheck -Name $packageName -ErrorAction Stop | Out-Null
+            Invoke-CMSiteUpdatePrerequisiteCheck -InputObject (Get-SccmUpdateCommandObject $guid) -ErrorAction Stop | Out-Null
         }
         # An already running prerequisite check is allowed to finish.
         Wait-SccmCondition -Description "$packageName prerequisites finish" -TimeoutMinutes $TimeoutMinutes -Test {
@@ -397,15 +779,26 @@ function Install-SccmUpdatePackage {
         if ($current.State -eq 131075 -and -not $AllowWarnings) {
             Stop-SccmWork "$packageName has prerequisite warnings. Review ConfigMgrPrereq.log. Only after review, set ludus_sccm_allow_prerequisite_warnings: true to continue."
         }
-        Set-SccmWarningPolicy $Provider $SiteCode $guid $AllowWarnings
-        Install-CMSiteUpdate -Name $packageName -Force -ErrorAction Stop | Out-Null
+        $nativePackage = Get-SccmUpdateCommandObject $guid
+        if ($current.State -notin @(131074, 131075) -or $nativePackage.State -notin @(131074, 131075)) {
+            Stop-SccmWork "$packageName prerequisite result changed before installation. Review its native status."
+        }
+        if ($nativePackage.State -eq 131075 -and -not $AllowWarnings) {
+            Stop-SccmWork "$packageName has prerequisite warnings. Review ConfigMgrPrereq.log before continuing."
+        }
+        # In the native installer this switch maps to PrereqFlag 2: continue on
+        # warnings. It cannot override the completed-prerequisite guards above;
+        # Configuration Manager still blocks prerequisite errors during setup.
+        Install-CMSiteUpdate -InputObject $nativePackage -SkipPrerequisiteCheck:$AllowWarnings -Force -ErrorAction Stop | Out-Null
     }
     Wait-SccmCondition -Description "$packageName installs at all CAS/primary sites" -TimeoutMinutes $TimeoutMinutes -RetryReadErrors -Test {
         $current = Get-SccmUpdateByGuid $Provider $SiteCode $guid
         if (Test-SccmUpdateFailure $current.State) { Stop-SccmWork "$packageName failed during installation: state $($current.State)" }
-        if ($current.State -eq 196613) { Stop-SccmWork "$packageName requires a server restart. Restart the affected site in the lab, then rerun." }
         $sites = @(Get-SccmProviderData $Provider $SiteCode 'SMS_Site' | Where-Object Type -in @(2, 4))
         $states = @(Get-SccmProviderData $Provider $SiteCode 'SMS_CM_UpdatePackageSiteStatus' "PackageGuid='$guid'")
+        $requests = @(Get-SccmSiteRestartRequests $sites $states $guid)
+        if ($requests.Count) { Stop-SccmForRestart $requests "$packageName requires a native site restart." }
+        if ($current.State -eq 196613) { Stop-SccmWork 'The package requests a restart but no affected site can be identified.' }
         foreach ($site in $sites) {
             $status = @($states | Where-Object SiteCode -eq $site.SiteCode)
             if ($status.Count -ne 1 -or $status[0].State -ne 196612) { return $false }
@@ -414,28 +807,169 @@ function Install-SccmUpdatePackage {
     }
 }
 
+function New-SccmManagementConnection {
+    param([string]$Provider, [string]$SiteCode)
+    $bin = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Configuration Manager\AdminConsole\bin'
+    [void][Reflection.Assembly]::LoadFrom("$bin\Microsoft.ConfigurationManagement.ManagementProvider.dll")
+    [void][Reflection.Assembly]::LoadFrom("$bin\AdminUI.WqlQueryEngine.dll")
+    $values = [Microsoft.ConfigurationManagement.ManagementProvider.SmsNamedValuesDictionary]::new()
+    $connection = [Microsoft.ConfigurationManagement.ManagementProvider.WqlQueryEngine.WqlConnectionManager]::new($values)
+    try {
+        [void]$connection.Connect($Provider)
+        if ([string]$values['ConnectedSiteCode'] -ine $SiteCode) { Stop-SccmWork 'The recovery management connection is not to the expected parent site.' }
+        return ,$connection
+    } catch { $connection.Dispose(); throw }
+}
+
+function Get-SccmSecondaryMissingUpdatePackages {
+    param([string]$Provider, [string]$ParentCode, [string]$SecondaryCode)
+    $definitions = @(Get-SccmProviderData $Provider $ParentCode 'SMS_SCI_SiteDefinition')
+    $locations = @{}
+    foreach ($code in @($ParentCode, $SecondaryCode)) {
+        $definition = @($definitions | Where-Object SiteCode -eq $code)
+        if ($definition.Count -ne 1) { Stop-SccmWork 'Cannot compare installed updates without unique database definitions.' }
+        $locations[$code] = Get-SccmDatabaseLocation $definition[0]
+        if ($locations[$code].Database -notmatch '^CM_[A-Za-z0-9]{3}$' -or $code -notmatch '^[A-Za-z0-9]{3}$') { Stop-SccmWork 'Unexpected update-history database identity.' }
+    }
+    $histories = @{}
+    foreach ($code in @($ParentCode, $SecondaryCode)) {
+        $location = $locations[$code]
+        $history = Invoke-SccmSqlQuery $location.Server "SELECT p.PackageGuid FROM [$($location.Database)].dbo.CM_UpdatePackageSiteStatus p INNER JOIN [$($location.Database)].dbo.SC_SiteDefinition s ON s.SiteNumber=p.SiteNumber WHERE s.SiteCode='$code' AND p.State=196612"
+        $histories[$code] = @($history.Rows | ForEach-Object { [string]$_.PackageGuid })
+    }
+    if (-not $histories[$ParentCode].Count) { Stop-SccmWork 'Parent installed-update history changed; recheck it before secondary recovery.' }
+    return @($histories[$ParentCode] | Where-Object { $_ -notin $histories[$SecondaryCode] })
+}
+
+function Request-SccmSecondaryUpdateRecovery {
+    param([string]$Provider, [string]$ParentCode, [string]$SecondaryCode,
+        [string]$Server, [string]$ExpectedVersion, [bool]$Preview = $true)
+    # Same-build fixes use the documented Recover Secondary Site workflow.
+    # Invoke-CMSecondarySiteUpgrade only accepts a lower BuildNumber. Preview
+    # returns before backups or provider writes; it never relies on WhatIf.
+    if ($ParentCode -notmatch '^[A-Za-z0-9]{3}$' -or $SecondaryCode -notmatch '^[A-Za-z0-9]{3}$') { Stop-SccmWork 'Invalid recovery site code.' }
+    $sites = @(Get-SccmProviderData $Provider $ParentCode 'SMS_Site')
+    $parent = @($sites | Where-Object SiteCode -eq $ParentCode)
+    $secondary = @($sites | Where-Object SiteCode -eq $SecondaryCode)
+    if ($parent.Count -ne 1 -or $secondary.Count -ne 1 -or $parent[0].Type -ne 2 -or
+        $parent[0].Status -ne 1 -or [version]$parent[0].Version -ne [version]$ExpectedVersion -or
+        $secondary[0].Type -ne 1 -or $secondary[0].Status -ne 1 -or $secondary[0].ReportingSiteCode -ine $ParentCode -or
+        $secondary[0].ServerName -ine $Server -or $secondary[0].SecondarySiteCMUpdateStatus -ne 0 -or
+        ([version]$secondary[0].Version).Build -ne ([version]$ExpectedVersion).Build -or
+        [version]$secondary[0].Version -gt [version]$ExpectedVersion) { Stop-SccmWork 'Secondary recovery identity, version or idle update status changed.' }
+    $active = @(Get-SccmProviderData $Provider $ParentCode 'SMS_CM_UpdatePackageSiteStatus' | Where-Object { Test-SccmUpdateInstalling $_.State })
+    if ($active.Count) { Stop-SccmWork 'A site update is active; do not request secondary recovery.' }
+    $links = @(Get-SccmProviderData $Provider $ParentCode 'SMS_ReplicationLinkStatus' | Where-Object { $_.ChildSite -eq $SecondaryCode -and $_.ParentSite -eq $ParentCode })
+    if (-not $links.Count -or @($links | Where-Object { $_.InitializationStatus -ne 6 -or $_.FailedSyncs -gt 0 -or $_.DegradedSyncs -gt 0 }).Count) { Stop-SccmWork 'Secondary replication must finish initialization before update recovery.' }
+    $hostState = Get-SccmHostSiteState $Server
+    if ($hostState.ServiceStatus -ne 'Running' -or [version]$hostState.Version -ne [version]$secondary[0].Version) { Stop-SccmWork 'The secondary host does not match its active provider version.' }
+    $installing = Invoke-SccmRemote $Server { return @(Get-Process setup,setupwpf,SMS_BOOTSTRAP,msiexec -ErrorAction SilentlyContinue).Count -gt 0 }
+    if ($installing) { Stop-SccmWork 'Native secondary setup is already active.' }
+    $definitions = @(Get-SccmProviderData $Provider $ParentCode 'SMS_SCI_SiteDefinition' "SiteCode='$SecondaryCode'")
+    if ($definitions.Count -ne 1) { Stop-SccmWork 'No unique secondary database definition exists.' }
+    $database = Get-SccmDatabaseLocation $definitions[0]
+    if ($database.Database -ine "CM_$SecondaryCode" -or ($database.Server -split '[\\.]')[0] -ine ($Server -split '\.')[0]) { Stop-SccmWork 'Secondary database identity does not match its server.' }
+    $missing = @(Get-SccmSecondaryMissingUpdatePackages $Provider $ParentCode $SecondaryCode)
+    if (-not $missing.Count) {
+        Write-SccmLog "Secondary $SecondaryCode has the installed packages locally; waiting for its native parent report without another recovery."
+        return @{Site=$SecondaryCode;Server=$Server;Submitted=$false;Preview=$Preview;WaitingForParentReport=$true;Backup=$null}
+    }
+    $connection = New-SccmManagementConnection $Provider $ParentCode
+    try {
+        $path = 'SMS_SCI_SiteDefinition.FileType=2,ItemName="Site Definition",ItemType="Site Definition",SiteCode="' + $SecondaryCode + '"'
+        $definition = $connection.GetInstance($path)
+        $properties = $definition.EmbeddedProperties
+        if (-not $properties.ContainsKey('Requested Status') -or $properties['Requested Status']['Value1'].StringValue -ne '1') { Stop-SccmWork 'Another secondary request is pending; recovery was not submitted.' }
+        if ($properties.ContainsKey('Setup Source Directory')) { Stop-SccmWork 'Automatic update recovery requires files copied from the current parent; review the custom setup source first.' }
+        $result = @{Site=$SecondaryCode;Server=$Server;Operation='1011';Submitted=$false;Preview=$Preview;Backup=$null;MissingPackages=$missing}
+        if ($Preview) { return $result }
+        $backup = Backup-SccmDatabase $database.Server $database.Database
+        if (-not $backup.BackupPath -or $backup.Database -ine $database.Database) { Stop-SccmWork 'A verified secondary backup is required before recovery.' }
+        $result.Backup = $backup
+        $definition.Get()
+        $properties = $definition.EmbeddedProperties
+        if (-not $properties.ContainsKey('Requested Status') -or $properties['Requested Status']['Value1'].StringValue -ne '1' -or
+            $properties.ContainsKey('Setup Source Directory')) { Stop-SccmWork 'The secondary request changed during backup; recovery was not submitted.' }
+        # Match the console's pending recovery request. SCCM owns service stops,
+        # database reinitialization and all resulting status/package records.
+        $request = $properties['Requested Status']
+        $request['Value1'].StringValue = '2'
+        $request['Value2'].StringValue = '1011'
+        if (-not $properties.ContainsKey('PreReq Check')) {
+            $check = $connection.CreateEmbeddedObjectInstance('SMS_EmbeddedProperty')
+            $check['PropertyName'].StringValue = 'PreReq Check'
+            $properties.Add('PreReq Check', $check)
+        }
+        $properties['PreReq Check']['Value'].IntegerValue = 1
+        $properties['PreReq Check']['Value1'].StringValue = ''
+        $properties['PreReq Check']['Value2'].StringValue = ''
+        $definition.EmbeddedProperties = $properties
+        [void]$definition.Put()
+        $result.Submitted = $true
+        Write-SccmLog "Requested native update recovery for secondary $SecondaryCode; verified backup: $($backup.BackupPath)."
+        return $result
+    } finally { $connection.Dispose() }
+}
+
 function Complete-SccmSecondaryUpdates {
-    param([string]$Provider, [string]$SiteCode, [int]$TimeoutMinutes = 180)
+    param([string]$Provider, [string]$SiteCode, [int]$TimeoutMinutes = 180, [int]$StalledMinutes = 20)
+    $changed = $false
     $sites = @(Get-SccmProviderData $Provider $SiteCode 'SMS_Site')
     foreach ($secondary in @($sites | Where-Object Type -eq 1)) {
         $parent = @($sites | Where-Object SiteCode -eq $secondary.ReportingSiteCode)[0]
         $parentProviders = @(Get-SccmProviderData $Provider $SiteCode 'SMS_SCI_SysResUse' | Where-Object { $_.SiteCode -eq $parent.SiteCode -and $_.RoleName -eq 'SMS Provider' })
         if (-not $parentProviders.Count) { Stop-SccmWork "No SMS Provider was found for parent $($parent.SiteCode)." }
-        $parentProvider = ([string]$parentProviders[0].NetworkOSPath).Trim('\')
-        if (([version]$secondary.Version -lt [version]$parent.Version -or $secondary.SecondarySiteCMUpdateStatus -ne 1) -and $secondary.SecondarySiteCMUpdateStatus -in @(1, 2)) {
+        $parentProvider = Select-SccmSiteProvider $parentProviders $parent.ServerName
+        if (([version]$secondary.Version).Build -lt ([version]$parent.Version).Build -and
+            $secondary.Status -in @(1,7) -and $secondary.SecondarySiteCMUpdateStatus -in @(0,1)) {
             Connect-SccmSite $parent.SiteCode $parentProvider
             Write-SccmLog "Requesting secondary upgrade $($secondary.SiteCode) under $($parent.SiteCode)."
             Invoke-CMSecondarySiteUpgrade -SecondarySiteCode $secondary.SiteCode -Force -ErrorAction Stop | Out-Null
+            $changed = $true
+        } elseif ($secondary.Status -eq 1 -and $secondary.SecondarySiteCMUpdateStatus -eq 0 -and
+            ([version]$secondary.Version).Build -eq ([version]$parent.Version).Build) {
+            Wait-SccmCondition -Description "secondary $($secondary.SiteCode) replication initializes before update recovery" -TimeoutMinutes $TimeoutMinutes -RetryReadErrors -Test {
+                $links = @(Get-SccmProviderData $parentProvider $parent.SiteCode 'SMS_ReplicationLinkStatus' | Where-Object { $_.ChildSite -eq $secondary.SiteCode -and $_.ParentSite -eq $parent.SiteCode })
+                return $links.Count -gt 0 -and @($links | Where-Object { $_.InitializationStatus -ne 6 -or $_.FailedSyncs -gt 0 -or $_.DegradedSyncs -gt 0 }).Count -eq 0
+            }
+            # Re-read after initialization: a new site's package report may
+            # already have arrived without needing recovery.
+            $current = @(Get-SccmProviderData $parentProvider $parent.SiteCode 'SMS_Site' "SiteCode='$($secondary.SiteCode)'")[0]
+            if ($current.Status -eq 1 -and $current.SecondarySiteCMUpdateStatus -eq 0) {
+                # A secondary never receives a same-build hotfix by itself;
+                # submit native Recover Secondary Site and wait below.
+                $request = Request-SccmSecondaryUpdateRecovery $parentProvider $parent.SiteCode $secondary.SiteCode $secondary.ServerName $parent.Version $false
+                $changed = $changed -or $request.Submitted
+            }
         } else {
             Write-SccmLog "Secondary $($secondary.SiteCode) is current or already processing an upgrade (status $($secondary.SecondarySiteCMUpdateStatus))."
         }
+        # SCCM can restart the secondary's components before its setup finishes;
+        # the replication sender then stops and the parent never receives the
+        # package report. Once setup has exited and links to the parent stay
+        # unhealthy, restart SMS_EXECUTIVE on the secondary once.
+        $stall = @{Since = $null; Restarted = $false}
         Wait-SccmCondition -Description "secondary $($secondary.SiteCode) matches parent $($parent.SiteCode)" -TimeoutMinutes $TimeoutMinutes -RetryReadErrors -Test {
             $current = @(Get-SccmProviderData $Provider $SiteCode 'SMS_Site' "SiteCode='$($secondary.SiteCode)'")[0]
-            return $current.Status -eq 1 -and [version]$current.Version -ge [version]$parent.Version -and $current.SecondarySiteCMUpdateStatus -eq 1
+            if ($current.Status -eq 1 -and [version]$current.Version -ge [version]$parent.Version -and $current.SecondarySiteCMUpdateStatus -eq 1) { return $true }
+            if ($stall.Restarted -or $current.Status -ne 1) { return $false }
+            $links = @(Get-SccmProviderData $parentProvider $parent.SiteCode 'SMS_ReplicationLinkStatus' | Where-Object { $_.ChildSite -eq $secondary.SiteCode -and $_.ParentSite -eq $parent.SiteCode })
+            $setup = Invoke-SccmRemote $secondary.ServerName { return @(Get-Process setup,setupwpf,SMS_BOOTSTRAP -ErrorAction SilentlyContinue).Count -gt 0 }
+            if ($setup -or -not @($links | Where-Object { $_.FailedSyncs -gt 0 -or $_.DegradedSyncs -gt 0 }).Count) { $stall.Since = $null; return $false }
+            if ($null -eq $stall.Since) { $stall.Since = [DateTime]::UtcNow; return $false }
+            if ([DateTime]::UtcNow - $stall.Since -lt [TimeSpan]::FromMinutes($StalledMinutes)) { return $false }
+            $stall.Restarted = $true
+            Write-SccmLog "Secondary $($secondary.SiteCode) links to $($parent.SiteCode) stayed unhealthy for $StalledMinutes minutes after setup; restarting SMS_EXECUTIVE once."
+            Invoke-SccmRemote $secondary.ServerName {
+                Restart-Service SMS_EXECUTIVE -Force -ErrorAction Stop
+                (Get-Service SMS_EXECUTIVE).WaitForStatus('Running', [TimeSpan]::FromMinutes(20))
+            }
+            return $false
         }
         Wait-SccmSiteReady $Provider $SiteCode $secondary.SiteCode $secondary.ServerName $TimeoutMinutes
     }
     Connect-SccmSite $SiteCode $Provider
+    return $changed
 }
 
 function Get-SccmDatabaseLocation {
@@ -457,7 +991,26 @@ function Backup-SccmDatabase {
     $safePath = $destination.Replace("'", "''")
     Write-SccmLog "Backing up $Database on $Server to $destination."
     Invoke-SccmSqlCommand $Server "BACKUP DATABASE [$Database] TO DISK = N'$safePath' WITH COPY_ONLY, CHECKSUM; RESTORE VERIFYONLY FROM DISK = N'$safePath' WITH CHECKSUM;"
+    Remove-SccmOlderDatabaseBackups (($Server -split '\\')[0]) $backupDirectory $Database $destination
     return @{Server = $Server; Database = $Database; BackupPath = $destination}
+}
+
+function Remove-SccmOlderDatabaseBackups {
+    param([string]$ComputerName, [string]$BackupDirectory, [string]$Database, [string]$KeepPath)
+    # Keep only the newest verified lab backup of each database; every
+    # servicing step otherwise adds another full copy. Other backups are
+    # never touched, and a failed cleanup never blocks servicing.
+    try {
+        $share = 'Microsoft.PowerShell.Core\FileSystem::' + (ConvertTo-SccmAdminShare $ComputerName $BackupDirectory.TrimEnd('\'))
+        $keep = Split-Path -Leaf $KeepPath
+        $pattern = '^' + [regex]::Escape($Database) + '_ludus_[0-9]{17}\.bak$'
+        foreach ($old in @(Get-ChildItem -LiteralPath $share -File -ErrorAction Stop | Where-Object { $_.Name -match $pattern -and $_.Name -ne $keep })) {
+            Remove-Item -LiteralPath $old.FullName -Force -ErrorAction Stop
+            Write-SccmLog "Removed older lab backup $($old.Name) from $ComputerName."
+        }
+    } catch {
+        Write-SccmLog "Could not remove older lab backups of $Database on ${ComputerName}: $($_.Exception.Message)" 'WARNING'
+    }
 }
 
 function Upgrade-SccmSecondarySql {
@@ -469,7 +1022,8 @@ function Upgrade-SccmSecondarySql {
         Write-SccmLog "Secondary SQL on $Server already meets the supported SQL 2017-or-newer floor."
         return
     }
-    if (-not (Test-Path -LiteralPath $source) -or ([version](Get-Item -LiteralPath $source).VersionInfo.FileVersion).Major -ne 16) {
+    # A UNC path otherwise resolves through CMSite when its drive is current.
+    if (-not (Test-Path -LiteralPath "Microsoft.PowerShell.Core\FileSystem::$source") -or ([version](Get-Item -LiteralPath "Microsoft.PowerShell.Core\FileSystem::$source").VersionInfo.FileVersion).Major -ne 16) {
         Stop-SccmWork "Secondary $Server needs SQL 2022 Express, but parent media does not contain it: $source. Update the parent to 2509 first; for a historical target, upgrade secondary SQL separately before rerunning."
     }
     $definition = @{Server = "$Server\$InstanceName"; Database = "CM_$SecondarySiteCode"}
@@ -477,8 +1031,8 @@ function Upgrade-SccmSecondarySql {
     [void](Backup-SccmDatabase $definition.Server $definition.Database)
     $destination = ConvertTo-SccmAdminShare $Server $WorkDirectory
     [void][IO.Directory]::CreateDirectory($destination)
-    Copy-Item -LiteralPath "$WorkDirectory\SccmDeployment.psm1" -Destination "$destination\SccmDeployment.psm1" -Force
-    Copy-Item -LiteralPath $source -Destination "$destination\sql2022-express.exe" -Force
+    Copy-SccmFile -LiteralPath "$WorkDirectory\SccmDeployment.psm1" -Destination "$destination\SccmDeployment.psm1"
+    Copy-SccmFile -LiteralPath $source -Destination "$destination\sql2022-express.exe"
     for ($attempt = 0; $attempt -lt 3; $attempt++) {
         $result = Invoke-SccmRemote $Server {
             param($directory, $instance)
@@ -530,6 +1084,31 @@ function Upgrade-SccmSecondarySql {
     Stop-SccmWork "Secondary SQL upgrade did not finish after the expected steps on $Server."
 }
 
+function Test-SccmStorageSummaryReady {
+    param([object]$Summary)
+    # This class describes storage health. AvailabilityState has an unspecified
+    # default of zero, including for healthy MPs; don't invent a required enum.
+    if ($null -eq $Summary -or $null -eq $Summary.Status -or $Summary.Status -ne 0) { return $false }
+    return $null -eq $Summary.DownSince -or $Summary.DownSince -is [DBNull] -or [string]::IsNullOrWhiteSpace([string]$Summary.DownSince)
+}
+
+function Test-SccmManagementPointEndpoint {
+    param([string]$Server)
+    if ($Server -notmatch '^[A-Za-z0-9][A-Za-z0-9.-]*$') { Stop-SccmWork 'Invalid management-point server name.' }
+    $response = Invoke-WebRequest -UseBasicParsing -Uri "http://$Server/sms_mp/.sms_aut?mplist" -TimeoutSec 30 -ErrorAction Stop
+    return $response.StatusCode -eq 200 -and [string]$response.Content -match '(?i)<MPList\b|<MP\b'
+}
+
+function Get-SccmProductionClientVersion {
+    param([string]$Provider, [string]$SiteCode, [string]$MsiPath)
+    $baseline = @(Get-SccmProviderData $Provider $SiteCode 'SMS_ClientBaseline' 'BaselineType=1')
+    if ($baseline.Count -ne 1 -or -not $baseline[0].ClientVersion) { Stop-SccmWork 'No unique production client baseline is available.' }
+    $version = [version]$baseline[0].ClientVersion
+    $msiVersion = [version](Get-SccmMsiVersion $MsiPath)
+    if ($version.Build -ne $msiVersion.Build -or $version -lt $msiVersion) { Stop-SccmWork 'Production client baseline and local MSI media do not match the same release.' }
+    return [string]$baseline[0].ClientVersion
+}
+
 function Get-SccmMsiVersion {
     param([string]$Path)
     $installer = New-Object -ComObject WindowsInstaller.Installer
@@ -539,7 +1118,7 @@ function Get-SccmMsiVersion {
     try {
         $database = $installer.OpenDatabase($Path, 0)
         $view = $database.OpenView("SELECT Value FROM Property WHERE Property='ProductVersion'")
-        $view.Execute()
+        [void]$view.Execute()
         $record = $view.Fetch()
         if ($null -eq $record) { Stop-SccmWork "MSI ProductVersion is missing from $Path." }
         return [string]$record.StringData(1)
@@ -556,7 +1135,79 @@ function Get-SccmConsoleVersion {
     if ($consoles.Count -eq 0) { return $null }
     # Multiple matching installed consoles are ambiguous and need review.
     if ($consoles.Count -ne 1) { Stop-SccmWork 'More than one Configuration Manager console installation was found.' }
-    return [string]$consoles[0].DisplayVersion
+    # The MSI inventory can retain its original revision after console files
+    # are installed. Native console setup records its actual product version
+    # separately: baseline 2509 has MSI 1000 and AdminConsoleVersion 1200.
+    $native = @(
+        foreach ($path in @('HKLM:\SOFTWARE\WOW6432Node\Microsoft\ConfigMgr10\Setup',
+                            'HKLM:\SOFTWARE\Microsoft\ConfigMgr10\Setup')) {
+            $setup = Get-ItemProperty -LiteralPath $path -ErrorAction SilentlyContinue
+            if ($setup -and $setup.AdminConsoleVersion) { $setup }
+        }
+    )
+    if ($native.Count -ne 1 -or -not $native[0].'UI Installation Directory') {
+        Stop-SccmWork 'The installed console has no unique native AdminConsoleVersion and installation directory. Review its setup log.'
+    }
+    $binary = Join-Path $native[0].'UI Installation Directory' 'bin\Microsoft.ConfigurationManagement.exe'
+    if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) { Stop-SccmWork 'The registered console executable is missing.' }
+    $version = [version]$native[0].AdminConsoleVersion
+    $msi = [version]$consoles[0].DisplayVersion
+    if ($version.Major -ne $msi.Major -or $version.Minor -ne $msi.Minor -or $version -lt $msi) {
+        Stop-SccmWork 'Native console version and installed MSI inventory are inconsistent. Review its setup log.'
+    }
+    return [string]$native[0].AdminConsoleVersion
+}
+
+function Get-SccmInstalledClient {
+    try {
+        return Get-CimInstance -Namespace root\ccm -ClassName SMS_Client -ErrorAction Stop
+    } catch {
+        # An MP can run CcmExec from SMS_CCM without an installed client.
+        # Access, transport and provider failures must still be reported.
+        if ([string]$_.Exception.NativeErrorCode -in @('InvalidClass', 'InvalidNamespace')) { return $null }
+        throw
+    }
+}
+
+function Get-SccmClientState {
+    $client = Get-CimInstance -Namespace root\ccm -ClassName SMS_Client -ErrorAction Stop
+    $service = Get-Service CcmExec -ErrorAction Stop
+    $assigned = (Invoke-CimMethod -Namespace root\ccm -ClassName SMS_Client -MethodName GetAssignedSite -ErrorAction Stop).sSiteCode
+    $setupRunning = @(Get-Process ccmsetup -ErrorAction SilentlyContinue).Count -gt 0
+    $rebootRequired = $false
+    $bootTimeUtc = ''
+    $setupExitCode = $null
+    $setupFinishedUtc = ''
+    $log = Join-Path $env:windir 'ccmsetup\Logs\ccmsetup.log'
+    if (-not $setupRunning -and (Test-Path -LiteralPath $log)) {
+        $tail = @(Get-Content -LiteralPath $log -Tail 100)
+        $exitLine = @($tail | Select-String 'CcmSetup is exiting with return code [0-9]+' | Select-Object -Last 1)
+        # The launcher also logs an exit right after starting the setup
+        # service; only the service run deletes that service before exiting.
+        if ($exitLine.Count -and [string]$exitLine[0] -match 'CcmSetup is exiting with return code ([0-9]+)\]') {
+            $code = [int]$Matches[1]
+            $index = $exitLine[0].LineNumber - 1
+            if (@($tail[[Math]::Max(0, $index - 15)..$index] | Where-Object { $_ -match 'Successfully deleted the ccmsetup service' }).Count) {
+                $setupExitCode = $code
+                $setupFinishedUtc = (Get-Item -LiteralPath $log).LastWriteTimeUtc.ToString('o')
+            }
+        }
+        if ($exitLine.Count -and [string]$exitLine[0] -match 'CcmSetup is exiting with return code 7\]') {
+            # File and boot times use the same guest clock. An old setup result
+            # must not request another restart after that guest has rebooted.
+            $boot = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime
+            $rebootRequired = (Get-Item -LiteralPath $log).LastWriteTime -ge $boot
+            $bootTimeUtc = $boot.ToUniversalTime().ToString('o')
+        }
+    }
+    return @{Version = [string]$client.ClientVersion; AssignedSite = [string]$assigned; Service = [string]$service.Status; SetupRunning = $setupRunning; RebootRequired = $rebootRequired; BootTimeUtc = $bootTimeUtc; SetupExitCode = $setupExitCode; SetupFinishedUtc = $setupFinishedUtc}
+}
+
+function Test-SccmClientReady {
+    param([object]$State, [string]$Version, [string]$SiteCode)
+    if ($null -eq $State) { return $false }
+    if ($State.RebootRequired) { Stop-SccmWork 'Native client setup requires a guest restart. Restart this computer and rerun completion.' }
+    return $State.Version -and [version]$State.Version -eq [version]$Version -and $State.AssignedSite -eq $SiteCode -and $State.Service -eq 'Running' -and -not $State.SetupRunning
 }
 
 function Get-SccmResourceComputerName {

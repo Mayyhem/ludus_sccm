@@ -5,6 +5,7 @@ param(
     [Parameter(Mandatory)][string]$SiteCode,
     [Parameter(Mandatory)][int]$TargetBuild,
     [Parameter(Mandatory)][string]$TargetRelease,
+    [bool]$ParentsOnly = $false,
     [bool]$AllowWarnings = $false,
     [int]$TimeoutMinutes = 180
 )
@@ -17,7 +18,6 @@ try {
     $root = @($sites | Where-Object SiteCode -eq $SiteCode)[0]
     if ($root.ReportingSiteCode -or $root.Type -notin @(2, 4)) { Stop-SccmWork 'Hierarchy servicing must run at CAS or a standalone primary.' }
     $primaries = @($sites | Where-Object Type -in @(2, 4))
-    Invoke-CMSiteUpdateCheck -ErrorAction Stop | Out-Null
     $hasChanged = $false
     $pending = @($primaries | Where-Object { ([version]$_.Version).Build -lt $TargetBuild })
     $active = @(Get-SccmProviderData $Provider $SiteCode 'SMS_CM_UpdatePackages' | Where-Object { Test-SccmUpdateInstalling $_.State })
@@ -25,6 +25,7 @@ try {
         Stop-SccmWork 'A different update is already running. Finish that update before starting this release hop.'
     }
     if ($pending.Count -or $active.Count) {
+        [void](Request-SccmCatalogCheck)
         Wait-SccmCondition -Description "SCCM $TargetRelease becomes available in the normal update catalog" -TimeoutMinutes $TimeoutMinutes -Test {
             $matches = @(Get-SccmProviderData $Provider $SiteCode 'SMS_CM_UpdatePackages' | Where-Object {
                 $_.UpdateType -eq 0 -and ([version]$_.FullVersion).Build -eq $TargetBuild -and $_.State -notin @(393213, 393214)
@@ -34,7 +35,9 @@ try {
         $package = Get-SccmProviderData $Provider $SiteCode 'SMS_CM_UpdatePackages' | Where-Object {
             $_.UpdateType -eq 0 -and ([version]$_.FullVersion).Build -eq $TargetBuild -and $_.State -notin @(393213, 393214)
         } | Sort-Object @{Expression = {[version]$_.FullVersion}} -Descending | Select-Object -First 1
-        if (-not (Test-SccmUpdateInstalling $package.State) -and $package.State -ne 196612) {
+        if (-not (Test-SccmUpdatePreparationStarted $package.State) -and
+            -not (Test-SccmUpdateInstalling $package.State) -and
+            -not (Test-SccmUpdateFailure $package.State) -and $package.State -ne 196612) {
             Assert-SccmUpdateReadiness $sites
             Assert-SccmReplication $Provider $SiteCode
             $definitions = @(Get-SccmProviderData $Provider $SiteCode 'SMS_SCI_SiteDefinition')
@@ -48,13 +51,13 @@ try {
                     $recoverySource = ConvertTo-SccmAdminShare $site.ServerName "$($site.InstallDir)\cd.latest"
                     $recoveryDestination = "$WorkDirectory\recovery\$($site.SiteCode)\$($site.Version)"
                     [void][IO.Directory]::CreateDirectory($recoveryDestination)
-                    Copy-Item -Path "$recoverySource\*" -Destination $recoveryDestination -Recurse -Force -ErrorAction Stop
+                    Copy-SccmFile -Path "$recoverySource\*" -Destination $recoveryDestination -Recurse
                     Write-SccmLog "Saved $($site.SiteCode) CD.Latest recovery files."
                 }
             }
             $backups | ConvertTo-Json -Depth 4 | Set-Content "$WorkDirectory\database-backups.json" -Encoding UTF8
         } else {
-            Write-SccmLog 'Resuming an update already in progress; no new recovery copy is made from partially updated files.'
+            Write-SccmLog 'Update preparation or installation has already started; retaining existing recovery evidence without copying refreshed source files again.'
         }
         Install-SccmUpdatePackage $Provider $SiteCode $package $AllowWarnings $TimeoutMinutes
         $hasChanged = $true
@@ -64,6 +67,9 @@ try {
     Wait-SccmCondition -Description "all primary sites reach build $TargetBuild" -TimeoutMinutes $TimeoutMinutes -RetryReadErrors -Test {
         $current = @(Get-SccmProviderData $Provider $SiteCode 'SMS_Site' | Where-Object Type -in @(2, 4))
         return @($current | Where-Object { $_.Status -ne 1 -or ([version]$_.Version).Build -lt $TargetBuild }).Count -eq 0
+    }
+    if ($ParentsOnly) {
+        return @{Changed = $hasChanged; Release = $TargetRelease; Build = $TargetBuild; ParentsOnly = $true}
     }
     $sites = @(Get-SccmProviderData $Provider $SiteCode 'SMS_Site')
     foreach ($secondary in @($sites | Where-Object Type -eq 1)) {
@@ -80,7 +86,7 @@ try {
             Write-SccmLog 'Historical parent media does not supply SQL 2022 Express; SQL support will be checked by setup.'
         }
     }
-    Complete-SccmSecondaryUpdates $Provider $SiteCode $TimeoutMinutes
+    if (Complete-SccmSecondaryUpdates $Provider $SiteCode $TimeoutMinutes) { $hasChanged = $true }
     $roles = @(Get-SccmProviderData $Provider $SiteCode 'SMS_SCI_SysResUse' | Where-Object RoleName -eq 'SMS Site Server')
     foreach ($role in $roles) {
         $site = @($sites | Where-Object SiteCode -eq $role.SiteCode)[0]

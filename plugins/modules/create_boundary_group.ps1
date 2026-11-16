@@ -76,11 +76,25 @@ if (-not $module.CheckMode) {
         }
     }
 
-    try {
-        Add-CMBoundaryToGroup -BoundaryGroupName $module.Params.boundary_group_name -BoundaryName $module.Params.boundary -ErrorAction Stop
+    # Forest discovery creates the AD site boundary shortly after it is
+    # enabled, often after this group exists. Wait for it rather than
+    # treating a missing boundary as already linked: without this link no
+    # computer is in a site assignment boundary and client push never runs.
+    $deadline = (Get-Date).AddMinutes(5)
+    while (-not ($boundary = Get-CMBoundary -BoundaryName $module.Params.boundary) -and (Get-Date) -lt $deadline) {
+        Start-Sleep -Seconds 15
+    }
+    if (-not $boundary) {
+        $module.FailJson("Boundary '$($module.Params.boundary)' does not exist yet. Active Directory forest discovery with boundary creation must create it before it can join '$($module.Params.boundary_group_name)'.")
+    }
+    $members = @(Get-WmiObject -Namespace $sms_ns -Class SMS_BoundaryGroupMembers -Filter "GroupID=$($bg_wmi.GroupID) AND BoundaryID=$($boundary.BoundaryID)")
+    if (-not $members.Count) {
+        try {
+            Add-CMBoundaryToGroup -BoundaryGroupName $module.Params.boundary_group_name -BoundaryName $module.Params.boundary -ErrorAction Stop
+        } catch {
+            $module.FailJson("Could not add boundary '$($module.Params.boundary)' to '$($module.Params.boundary_group_name)': $($_.Exception.Message)", $_)
+        }
         $module.Result.changed = $true
-    } catch {
-        # Boundary already linked to the group; ignore.
     }
 }
 

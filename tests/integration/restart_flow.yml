@@ -1,0 +1,28 @@
+---
+# Uses controller-only action fixtures. It never connects to a guest.
+- name: Verify bounded restart control flow
+  hosts: controller
+  gather_facts: false
+  vars:
+    range_id: cthompson
+    ludus_sccm_work_directory: C:\fixture
+    ludus_sccm_max_restart_rounds: 2
+    ludus_sccm_automatic_reboots: true
+    ludus_sccm_restart_timeout_seconds: 900
+    ludus_sccm_restart_inventory_map: {}
+    sccm_phase_name: Fixture completion
+    sccm_phase_script: Complete-SccmDeployment.ps1
+    sccm_phase_arguments:
+      SiteCode: CAS
+  tasks:
+    - ansible.builtin.include_role:
+        name: mayyhem.ludus_sccm.sccm_common
+        tasks_from: run_phase.yml
+    - name: Verify the next phase starts with its own incomplete checkpoint
+      ansible.builtin.include_role:
+        name: mayyhem.ludus_sccm.sccm_common
+        tasks_from: run_phase.yml
+      vars:
+        sccm_phase_arguments:
+          SiteCode: PS1
+      when: sccm_test_repeat_phase | default(false) | bool
