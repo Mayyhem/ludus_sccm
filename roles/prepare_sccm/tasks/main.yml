@@ -59,7 +59,10 @@
     ansible_become_method: runas
     ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
-    ansible_become_flags: logon_type=interactive logon_flags=with_profile
+    # Background (async) runs must not load the profile: since the November 2026
+    # Windows update the loaded hive is unloaded once the become launcher exits,
+    # so Start-Process and HKCU access fail (registry key marked for deletion).
+    ansible_become_flags: logon_type=interactive logon_flags=
   when: not ansible_check_mode
 
 - name: Restart after prerequisite installation when needed

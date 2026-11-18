@@ -35,6 +35,10 @@
       depth: 12
     async: 172800
     poll: 30
+    # Callers become the domain admin; a background run must not load the
+    # profile (unloaded early since the November 2026 Windows update).
+    vars:
+      ansible_become_flags: logon_type=interactive logon_flags=
     register: ludus_sccm_phase_result
   - name: Record the phase checkpoint
     ansible.builtin.set_fact:

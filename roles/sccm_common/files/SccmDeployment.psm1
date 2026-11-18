@@ -738,7 +738,7 @@ function Get-SccmUpdateCommandObject {
 }
 
 function Install-SccmUpdatePackage {
-    param([string]$Provider, [string]$SiteCode, [psobject]$Package, [bool]$AllowWarnings, [int]$TimeoutMinutes = 180)
+    param([string]$Provider, [string]$SiteCode, [psobject]$Package, [bool]$AllowWarnings, [int]$TimeoutMinutes = 180, [int]$CatalogRetryMinutes = 10)
     $guid = [string]$Package.PackageGuid
     $packageName = [string]$Package.Name
     Write-SccmLog "Processing $packageName ($guid), state $($Package.State)."
@@ -759,9 +759,22 @@ function Install-SccmUpdatePackage {
             Invoke-CMSiteUpdateDownload -InputObject (Get-SccmUpdateCommandObject $guid) -Force -ErrorAction Stop | Out-Null
         }
         # Already downloading/downloaded packages are resumed rather than reset.
+        # The service connection point fetches queued downloads only when it
+        # syncs. A request queued just after a sync can otherwise wait hours for
+        # an unrelated one, so while the package is still only available, ask
+        # for the console's normal Check for Updates at the native interval.
+        $catalogRetry = @{Next = [DateTime]::UtcNow.AddMinutes($CatalogRetryMinutes)}
         Wait-SccmCondition -Description "$packageName download finishes" -TimeoutMinutes $TimeoutMinutes -Test {
             $state = (Get-SccmUpdateByGuid $Provider $SiteCode $guid).State
             if (Test-SccmUpdateFailure $state) { Stop-SccmWork "$packageName download failed: state $state" }
+            if ($state -eq 327682 -and [DateTime]::UtcNow -ge $catalogRetry.Next) {
+                $catalogRetry.Next = [DateTime]::UtcNow.AddMinutes($CatalogRetryMinutes)
+                try {
+                    if (Request-SccmCatalogCheck) { Write-SccmLog "$packageName is still queued; requested a catalog check so the service connection point fetches it." }
+                } catch {
+                    Write-SccmLog "Catalog check request failed while $packageName is queued: $($_.Exception.Message)" 'WARNING'
+                }
+            }
             return $state -eq 262146 -or (Test-SccmUpdatePreparationStarted $state)
         }
         $current = Get-SccmUpdateByGuid $Provider $SiteCode $guid

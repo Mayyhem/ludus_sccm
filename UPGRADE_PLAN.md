@@ -2,6 +2,30 @@
 
 Plan agreed on 2026-10-21. This document describes the intended work, the reasons for it, and the evidence needed before calling it complete. It is not a claim that the features below already exist.
 
+## Clean run 011 acceptance passed after recorded interventions: 2603 with hotfixes, November 18, 11:14 EST
+
+The run started from zero and finished at 2603 (2509 baseline upgraded in place) with hotfixes, and independent native/functional acceptance passed. Status PASSED_AFTER_INTERVENTION; it is not unattended proof. Recorded interventions (run.json ExternalInterventions): ConfigCorrection, LudusPlatformRedeploy, SccmServicingCorrection, SourceCorrection, UserDefinedRolesRerun. Two were code fixes made mid-run: background domain-admin tasks no longer load the profile, and queued hotfix downloads get a native catalog check. One manual native Check for Updates was issued during diagnosis. Proof and final reports: .tmp/evidence/unattended/run-011/acceptance-summary.json and run.json. Only user/range cthompson was accessed. Nothing was staged, committed, pushed or published.
+
+## Run 011: queued hotfix downloads are now handed to the service connection point, November 17, 23:50 EST
+
+Run 011 installed every site and role and upgraded the hierarchy to 2603, then hotfix servicing timed out after 3 hours waiting for KB38232642 to download. The download was requested 3 minutes after the service connection point (cas-scp) last synced; the SCP fetches queued downloads only during a sync, and nothing triggered another one. One native Check for Updates on cas-pss made it fetch the hotfix in 16 seconds. Install-SccmUpdatePackage now requests that native catalog check every 10 minutes while a requested download is still queued; tests/powershell/Test-SccmDeployment.ps1 covers it. The manual check and the code change are recorded in run.json as an SccmServicingCorrection, so run 011 cannot count as unattended proof. Evidence: .tmp/evidence/unattended/run-011/hotfix-diag.
+
+## Run 011: background domain-admin tasks no longer load the profile, November 17, 14:41 EST
+
+After the November Windows update KB5131090, ps1-pss failed prepare_sccm twice with Start-Process: registry key marked for deletion. A harmless probe reproduced it 3/3 on ps1-pss (20348.5870) and 0/3 on unpatched cas-pss: a background (async) runas job that loads the domain admin profile loses that hive as soon as the become launcher exits. Without the profile flag (logon_flags=) Start-Process, HKCU writes and domain network access all work on both. The five async domain-admin tasks (prerequisites, media, passive and secondary readiness, phase runner) and the secondary console include now use logon_flags=; tests/unit/test_async_become.py guards it. Run 011 continues with a user-defined-roles rerun, recorded as a SourceCorrection. Evidence: .tmp/evidence/unattended/run-011/profile-diag.
+
+## Clean run 011 config correction: November Windows update, November 17, 12:02 EST
+
+The first full run 011 deploy stopped at windows_base on ps1-pss before any SCCM product role: the pinned October Windows Server 2022 cumulative update KB5126655 is superseded by November KB5131090 (released November 10, after run 010), so Windows Update no longer offers it. The run config now pins KB5131090 instead for ps1-pss and ps1-sms (KB5122882 kept), recorded as a ConfigCorrection intervention, and one full redeploy started without teardown. new-config.yml still pins KB5126655 and will fail the same way until updated.
+
+## Clean run 011 deploying, November 17, 10:01 EST
+
+The scoped API confirmed DESTROYED with zero VMs. One full unfiltered ludus --user cthompson --range cthompson range deploy invocation has started using final archive 10a520539fd307f15fdf2226a1e03fee0789b248b607ac0a121dc233a7baeda4. Any deployment repair requires another clean run. Inputs and acceptance output are in .tmp/evidence/unattended/run-011. Do not submit another deploy or alter its executable source while it runs. This is in-progress validation, not unattended acceptance.
+
+## Clean run 011 preparation: fresh 2603 with hotfixes, November 17, 10:01 EST
+
+Owner request 2026-11-17: tear down and install 2603 from scratch. The in-place 2509 to 2603 upgrade of the run 010 lab finished CAS, PS1 and SEC at 5.00.9146.1000 but stopped at passive ps1-psv: PS1's update reinstalled the SMS Provider on ps1-psv, which replaced the shared bin\x64 binaries (smsexec 9146.1009) but left FailOverMgr.dll at 9141.1002, so SMS_FAILOVER_MANAGER failed to load (error 127) and could not run the passive upgrade job. Run 005 (2509 to 2609, same layout) did not hit this. Run 011 rebuilds from zero with config .tmp/cthompson-2603-cmbp.yml: 2509 baseline, upgrade to 2603, applicable hotfixes, custom role, two administrators and the PS1-DEV primary user. Evidence: .tmp/evidence/unattended/run-011 and .tmp/evidence/upgrade-2603.
+
 ## ConfigManBearPig lab setup added and proven on the run 010 lab, November 12, 10:50 EST
 
 At the owner's request, service_hierarchy can now add collector-testing RBAC and user device affinity after completion: `ludus_sccm_custom_security_roles`, `ludus_sccm_administrative_users` (a password creates the domain account) and `ludus_sccm_primary_users`, all empty by default. The sample sets them on the CAS: `Custom Role` (a copy of Read-only Analyst), `networkaccess` as Full Administrator, a new `roanalyst` as Read-only Analyst, and `domainuser` as PS1-DEV's primary user. These were applied to the run 010 lab by rerunning only service_hierarchy on cas-pss (no teardown; config .tmp/cthompson-2509-hotfix-cmbp.yml). A second rerun changed nothing. ConfigManBearPig's live integration tests, run from this host with a /tmp-only collector fix and updated fixtures, then passed 93, failed 3 and skipped 1. The 3 failures are ConfigManBearPig-side: the AdminService relay case predates 2509, and two SameHostAs cases need the collector to get client hostnames without running on PS1-DEV. Evidence: .tmp/evidence/cmbp-lab-setup.

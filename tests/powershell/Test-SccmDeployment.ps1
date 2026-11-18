@@ -271,7 +271,7 @@ Assert-Result $timedOut 'An unfinished operation has a bounded wait'
 
 # Replace all external operations inside the module with local fixtures. These
 # scenarios exercise the real update controller, including its stop conditions.
-foreach ($scenario in @('success', 'warnings', 'reviewed-warnings', 'errors', 'errors-allowed', 'changed-result', 'resume', 'content_resume', 'replicated_resume', 'prereq_resume', 'prereq_ready', 'prereq_warnings')) {
+foreach ($scenario in @('success', 'queued_download', 'warnings', 'reviewed-warnings', 'errors', 'errors-allowed', 'changed-result', 'resume', 'content_resume', 'replicated_resume', 'prereq_resume', 'prereq_ready', 'prereq_warnings')) {
     $module = Import-Module $modulePath -Force -PassThru
     $outcome = & $module {
         param($scenario)
@@ -280,6 +280,7 @@ foreach ($scenario in @('success', 'warnings', 'reviewed-warnings', 'errors', 'e
         $script:installCalls = 0
         $script:downloadCalls = 0
         $script:prereqCalls = 0
+        $script:catalogCalls = 0
         $script:fixtureScenario = $scenario
         $script:fixtureReads = 0
         function Get-SccmUpdateByGuid {
@@ -290,7 +291,10 @@ foreach ($scenario in @('success', 'warnings', 'reviewed-warnings', 'errors', 'e
             }
             return [pscustomobject]@{State = $script:fixtureState}
         }
-        function Invoke-CMSiteUpdateDownload { param($InputObject, [switch]$Force, $ErrorAction) if($InputObject.PackageGuid -ne 'offline-fixture'){throw 'Wrong update object.'} $script:downloadCalls++; $script:fixtureState = 262146 }
+        # A queued download stays available until the SCP syncs; a catalog check starts it.
+        function Invoke-CMSiteUpdateDownload { param($InputObject, [switch]$Force, $ErrorAction) if($InputObject.PackageGuid -ne 'offline-fixture'){throw 'Wrong update object.'} $script:downloadCalls++; if($script:fixtureScenario -ne 'queued_download'){$script:fixtureState = 262146} }
+        function Request-SccmCatalogCheck { $script:catalogCalls++; if($script:fixtureState -eq 327682){$script:fixtureState = 262146}; return $true }
+        function Start-Sleep { param($Seconds) }
         function Invoke-CMSiteUpdatePrerequisiteCheck {
             param($InputObject, $ErrorAction) if($InputObject.PackageGuid -ne 'offline-fixture'){throw 'Wrong update object.'}
             $script:prereqCalls++
@@ -315,11 +319,13 @@ foreach ($scenario in @('success', 'warnings', 'reviewed-warnings', 'errors', 'e
         if ($scenario -eq 'resume') { $initialState = 196610; $script:fixtureState = 196612 }
         $package = [pscustomobject]@{PackageGuid = 'offline-fixture'; Name = 'Fixture update'; State = $initialState}
         $failure = $null
-        try { Install-SccmUpdatePackage 'unused' 'CAS' $package ($scenario -in @('reviewed-warnings','errors-allowed')) 0 } catch { $failure = $_.Exception.Message }
-        return @{Failure = $failure; Installs = $script:installCalls; Downloads = $script:downloadCalls; Prerequisites = $script:prereqCalls; WarningSwitch=$script:warningSwitch}
+        $timeout = if ($scenario -eq 'queued_download') {1} else {0}
+        try { Install-SccmUpdatePackage 'unused' 'CAS' $package ($scenario -in @('reviewed-warnings','errors-allowed')) $timeout -CatalogRetryMinutes 0 } catch { $failure = $_.Exception.Message }
+        return @{Failure = $failure; Installs = $script:installCalls; Downloads = $script:downloadCalls; Prerequisites = $script:prereqCalls; WarningSwitch=$script:warningSwitch; CatalogChecks=$script:catalogCalls}
     } $scenario
     switch ($scenario) {
-        'success' { Assert-Result ($null -eq $outcome.Failure -and $outcome.Installs -eq 1 -and $outcome.Downloads -eq 1 -and $outcome.Prerequisites -eq 1 -and $outcome.WarningSwitch -eq $false) 'A new update downloads, checks prerequisites, and installs once' }
+        'success' { Assert-Result ($null -eq $outcome.Failure -and $outcome.Installs -eq 1 -and $outcome.Downloads -eq 1 -and $outcome.Prerequisites -eq 1 -and $outcome.WarningSwitch -eq $false -and $outcome.CatalogChecks -eq 0) 'A new update downloads, checks prerequisites, and installs once' }
+        'queued_download' { Assert-Result ($null -eq $outcome.Failure -and $outcome.Installs -eq 1 -and $outcome.Downloads -eq 1 -and $outcome.CatalogChecks -eq 1) 'A download still queued at the service connection point gets one normal catalog check, not another download request' }
         'reviewed-warnings' { Assert-Result ($null -eq $outcome.Failure -and $outcome.Installs -eq 1 -and $outcome.WarningSwitch -eq $true) 'Reviewed completed warnings use the native continue-on-warning installer flag' }
         'errors-allowed' { Assert-Result ($outcome.Failure -like '*prerequisite check failed*' -and $outcome.Installs -eq 0) 'Allowing warnings never starts installation after prerequisite errors' }
         'changed-result' { Assert-Result ($outcome.Failure -like '*result changed before installation*' -and $outcome.Installs -eq 0) 'Changed native prerequisite results block installation at the final guard' }

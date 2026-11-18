@@ -15,7 +15,9 @@
     ansible_become_method: runas
     ansible_become_user: '{{ ludus_domain_netbios_name }}\{{ defaults.ad_domain_admin }}'
     ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
-    ansible_become_flags: logon_type=interactive logon_flags=with_profile
+    # Include parameters outrank the phase task's own setting; the console phase
+    # runs in the background, so it must not load the profile either.
+    ansible_become_flags: logon_type=interactive logon_flags=
 
 - name: Clear old secondary site logs and status
   ansible.windows.win_shell: |
